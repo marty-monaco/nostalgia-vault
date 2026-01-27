@@ -9,7 +9,7 @@ st.set_page_config(page_title="Nostalgia Vault: Pilot", page_icon="⚡", layout=
 # --- GOOGLE SHEETS SETUP ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 # We use the direct URL to ensure the connection never breaks
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1mMS1gotUwGLONeYTkRuO37DTd12g6-TPKkltrsPclfg/edit#gid=0"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1mMS1gotUwGLONeYTkRuO37DTd12g6-TPKkltrsPclfg/edit"
 
 # --- HEADER ---
 st.title("⚡ The Nostalgia Vault")
@@ -59,3 +59,4 @@ if st.button("🚀 LOG DATA TO THE VAULT"):
         except Exception as e:
             st.error(f"Vault Connection Error: {e}")
             st.info("Check: 1. Tab name is 'DataCapture' | 2. Sheet is Shared as 'Editor'")
+
