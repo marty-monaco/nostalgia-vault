@@ -45,10 +45,11 @@ if st.button("🚀 LOG DATA TO THE VAULT"):
         }])
         
         # Updated to point to your new tab name
-        existing_data = conn.read(worksheet="DataCapture")
+        existing_data = conn.read(worksheet="Sheet1")
         updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-        conn.update(worksheet="DataCapture", data=updated_df)
+        conn.update(worksheet="Sheet1", data=updated_df)
         
         st.success("Data Synced to Google Sheets!")
         st.balloons()
+
 
