@@ -1,76 +1,53 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
-import os
 
-# --- APP CONFIG & STYLING ---
-st.set_page_config(page_title="Nostalgia Vault: Pulse Check", page_icon="🕹️", layout="centered")
+# --- APP CONFIG ---
+st.set_page_config(page_title="Nostalgia Vault: Pilot", page_icon="⚡", layout="centered")
 
-# Custom CSS for that 80s/Neon Startup vibe
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; color: #ffffff; }
-    .stButton>button { background-color: #ff007f; color: white; border-radius: 8px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- GOOGLE SHEETS CONNECTION ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- HEADER ---
-st.title("🕹️ The Nostalgia Vault")
-st.subheader("8-Second Pulse Check: Student Edition")
-st.write("Complete this quick check to unlock your 'Vault' points!")
+# --- HEADER & STYLING ---
+st.title("⚡ The Nostalgia Vault")
+st.subheader("Middle School Pilot: Pulse Check")
 
-# --- STEP 1: IDENTIFICATION ---
-with st.expander("Step 1: Your Info", expanded=True):
+# --- STUDENT IDENTIFICATION ---
+with st.container():
+    st.write("### 📝 1. Your Info")
     col1, col2 = st.columns(2)
     with col1:
-        class_code = st.text_input("Class Code", placeholder="e.g. ND-HIST-101")
+        class_code = st.text_input("Class Code", placeholder="e.g. WI-RAPIDS-01")
     with col2:
-        student_id = st.text_input("Student Initials", placeholder="e.g. MM")
+        student_id = st.text_input("Initials", placeholder="e.g. ML")
 
-# --- STEP 2: THE CONTENT CHECK ---
-# (Note: In production, these questions would pull from a database based on the Video ID)
+# --- KNOWLEDGE CHECK ---
 st.divider()
-st.write("### Step 2: Knowledge Check")
+st.write("### 🧠 2. 8-Second Knowledge Check")
 
-q1 = st.selectbox(
-    "1. What was the secret mission behind finding the Titanic?",
-    ["Select an answer...", "A tourism promo", "A secret Cold War Navy mission", "A movie production"]
-)
+q1 = st.radio("Which '80s icon was originally called 'Puck-Man'?", ["The Walkman", "Pac-Man", "Mongoose BMX"], index=None)
+q2 = st.radio("True or False: The Titanic was found during a secret Cold War mission.", ["True", "False"], index=None)
+q3 = st.select_slider("How much did this help you understand the topic?", options=["1", "2", "3", "4", "5"], value="3")
 
-q2 = st.radio(
-    "2. Why is the Titanic currently disappearing?",
-    ["Rust from the salt water", "Iron-eating bacteria", "Giant squid attacks"]
-)
-
-q3 = st.select_slider(
-    "3. On a scale of 1-5, how much do you want to learn more about this?",
-    options=[1, 2, 3, 4, 5], value=3
-)
-
-# --- STEP 3: DATA LOGGING ---
-if st.button("🚀 SUBMIT TO THE VAULT"):
-    if q1 == "Select an answer..." or not class_code:
-        st.error("Please provide your class code and answer all questions!")
+# --- SUBMIT TO GOOGLE SHEETS ---
+if st.button("🚀 LOG DATA TO THE VAULT"):
+    if not class_code or not student_id or q1 is None or q2 is None:
+        st.error("Please fill out all fields!")
     else:
-        # Create a dictionary for the new data
-        new_data = {
-            "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-            "Class_Code": [class_code],
-            "Student": [student_id],
-            "Q1_Response": [q1],
-            "Q2_Response": [q2],
-            "Engagement_Score": [q3],
-            "Correct": [1 if q1 == "A secret Cold War Navy mission" and q2 == "Iron-eating bacteria" else 0]
-        }
+        new_row = pd.DataFrame([{
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Class": class_code,
+            "Student": student_id,
+            "Q1": q1,
+            "Q2": q2,
+            "Interest": q3
+        }])
         
-        df_new = pd.DataFrame(new_data)
-
-        # Save to CSV (Appends if file exists, creates if not)
-        file_path = "pilot_data_log.csv"
-        if not os.path.isfile(file_path):
-            df_new.to_csv(file_path, index=False)
-        else:
-            df_new.to_csv(file_path, mode='a', header=False, index=False)
-
-        st.success("Data Logged! You've successfully contributed to the pilot.")
+        # Updated to point to your new tab name
+        existing_data = conn.read(worksheet="Data Capture")
+        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+        conn.update(worksheet="Data Capture", data=updated_df)
+        
+        st.success("Data Synced to Google Sheets!")
         st.balloons()
