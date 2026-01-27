@@ -6,10 +6,12 @@ from datetime import datetime
 # --- APP CONFIG ---
 st.set_page_config(page_title="Nostalgia Vault: Pilot", page_icon="⚡", layout="centered")
 
-# --- GOOGLE SHEETS CONNECTION ---
+# --- GOOGLE SHEETS SETUP ---
 conn = st.connection("gsheets", type=GSheetsConnection)
+# We use the direct URL to ensure the connection never breaks
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1mMS1gotUwGLONeYTkRuO37DTd12g6-TPKkltrsPclfg/edit#gid=0"
 
-# --- HEADER & STYLING ---
+# --- HEADER ---
 st.title("⚡ The Nostalgia Vault")
 st.subheader("Middle School Pilot: Pulse Check")
 
@@ -25,16 +27,16 @@ with st.container():
 # --- KNOWLEDGE CHECK ---
 st.divider()
 st.write("### 🧠 2. 8-Second Knowledge Check")
-
 q1 = st.radio("Which '80s icon was originally called 'Puck-Man'?", ["The Walkman", "Pac-Man", "Mongoose BMX"], index=None)
 q2 = st.radio("True or False: The Titanic was found during a secret Cold War mission.", ["True", "False"], index=None)
 q3 = st.select_slider("How much did this help you understand the topic?", options=["1", "2", "3", "4", "5"], value="3")
 
-# --- SUBMIT TO GOOGLE SHEETS ---
+# --- SUBMIT LOGIC ---
 if st.button("🚀 LOG DATA TO THE VAULT"):
     if not class_code or not student_id or q1 is None or q2 is None:
         st.error("Please fill out all fields!")
     else:
+        # 1. Create the new row
         new_row = pd.DataFrame([{
             "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "Class": class_code,
@@ -44,12 +46,16 @@ if st.button("🚀 LOG DATA TO THE VAULT"):
             "Interest": q3
         }])
         
-        # Updated to point to your new tab name
-        existing_data = conn.read(worksheet="Sheet1")
-        updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-        conn.update(worksheet="Sheet1", data=updated_df)
-        
-        st.success("Data Synced to Google Sheets!")
-        st.balloons()
-
-
+        try:
+            # 2. Read existing data (Using direct URL and Worksheet name)
+            existing_data = conn.read(spreadsheet=SHEET_URL, worksheet="DataCapture")
+            
+            # 3. Combine and Update
+            updated_df = pd.concat([existing_data, new_row], ignore_index=True)
+            conn.update(spreadsheet=SHEET_URL, worksheet="DataCapture", data=updated_df)
+            
+            st.success("Data Synced to Google Sheets!")
+            st.balloons()
+        except Exception as e:
+            st.error(f"Vault Connection Error: {e}")
+            st.info("Check: 1. Tab name is 'DataCapture' | 2. Sheet is Shared as 'Editor'")
