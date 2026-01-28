@@ -21,10 +21,25 @@ with st.container():
 
 # --- 2. KNOWLEDGE CHECK ---
 st.divider()
-st.write("### 🧠 2. 8-Second Knowledge Check")
-q1 = st.radio("Which '80s icon was originally called 'Puck-Man'?", ["The Walkman", "Pac-Man", "Mongoose BMX"], index=None)
-q2 = st.radio("True or False: The Titanic was found during a secret Cold War mission.", ["True", "False"], index=None)
-q3 = st.select_slider("How much did this help you understand?", options=["1", "2", "3", "4", "5"], value="3")
+st.write("### 🧠 2. 8-Second Knowledge Check: Titanic")
+
+q1 = st.radio(
+    "What was the 'Secret Mission' that led Dr. Ballard to the Titanic?",
+    ["Finding lost Cold War submarines", "Searching for Atlantis", "Testing a new sonar for NASA"],
+    index=None
+)
+
+q2 = st.radio(
+    "What method did Ballard use to finally spot the debris field?",
+    ["Sonar", "Argo", "Radar"],
+    index=None
+)
+
+q3 = st.select_slider(
+    "Rate your 'Nostalgia Spark' (How much did this make you want to learn more?)",
+    options=["1 (Low)", "2", "3", "4", "5 (High)"],
+    value="3"
+)
 
 # --- 3. LOCAL CSV LOGIC ---
 if st.button("🚀 LOG DATA TO THE VAULT"):
@@ -60,3 +75,4 @@ with st.expander("Admin: View Archived Data"):
         st.download_button("Download CSV", df.to_csv(index=False), "pilot_data.csv", "text/csv")
     else:
         st.write("No data archived yet.")
+
