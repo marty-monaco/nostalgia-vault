@@ -48,15 +48,16 @@ if st.button("🚀 LOG DATA TO THE VAULT"):
         
         try:
             # 2. Read existing data (Using direct URL and Worksheet name)
-            existing_data = conn.read(spreadsheet=SHEET_URL, worksheet="DataCapture")
+            existing_data = conn.read(spreadsheet=SHEET_URL, worksheet="Sheet1")
             
             # 3. Combine and Update
             updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-            conn.update(spreadsheet=SHEET_URL, worksheet="DataCapture", data=updated_df)
+            conn.update(spreadsheet=SHEET_URL, worksheet="Sheet1", data=updated_df)
             
             st.success("Data Synced to Google Sheets!")
             st.balloons()
         except Exception as e:
             st.error(f"Vault Connection Error: {e}")
-            st.info("Check: 1. Tab name is 'DataCapture' | 2. Sheet is Shared as 'Editor'")
+            st.info("Check: 1. Tab name is 'Sheet1' | 2. Sheet is Shared as 'Editor'")
+
 
