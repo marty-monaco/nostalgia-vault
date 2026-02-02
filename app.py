@@ -21,11 +21,11 @@ topic = st.sidebar.selectbox("Select a Vault Story", ["DNA Fingerprinting", "The
 # --- DYNAMIC CONTENT LOGIC ---
 if topic == "DNA Fingerprinting":
     st.subheader("🧬 The Biological Barcode")
-    st.video("https://youtube.com/shorts/YOUR_DNA_LINK") 
+    st.video("https://youtube.com/shorts/T_UJBPRYvcg?si=wMzt-I5iB0eLs0cN") 
     
     st.write("### 🧠 DNA Pulse Check")
-    q1 = st.radio("What acts as the 'molecular scissors' that cut DNA strands?", ["Restriction Enzymes", "Electrical Currents", "Pumice Stones"], index=None)
-    q2 = st.radio("True or False: Smaller DNA fragments move faster through the gel than larger ones.", ["True", "False"], index=None)
+    q1 = st.radio("Who made the discovery that DNA was as unique as a fingerprint?", ["Dr Alec Jeffries", "Dr Henry Lees", "Dr Michael Baden"], index=None)
+    q2 = st.radio("True or False: DNA is now widely used to determine paternity?.", ["True", "False"], index=None)
     interest = st.select_slider("Rate your interest in Forensic Science:", options=["1", "2", "3", "4", "5"], value="3")
 
 elif topic == "The Titanic":
@@ -33,13 +33,13 @@ elif topic == "The Titanic":
     st.video("https://youtube.com/shorts/YOUR_TITANIC_LINK") 
     
     st.write("### 🧠 Buoyancy Pulse Check")
-    q1 = st.radio("What force was lost as the Titanic's hull filled with water?", ["Gravity", "Buoyancy", "Magnetism"], index=None)
-    q2 = st.radio("What happens to the density of a ship when its air-filled compartments fill with water?", ["Density Increases", "Density Decreases", "Density Stays Same"], index=None)
+    q1 = st.radio("What method did Robert Ballard use to search?", ["SONAR", "RADAR", "Argo Robot"], index=None)
+    q2 = st.radio("What was the original reason for the mission?", ["Map the floor of the North Atlantic", "Search for lost Nuclear Subs", "Searching for hydrothermal vents"], index=None)
     interest = st.select_slider("Rate your interest in Marine Engineering:", options=["1", "2", "3", "4", "5"], value="3")
 
 elif topic == "The Space Shuttle Columbia":
     st.subheader("🚀 The Thermal Shield")
-    st.video("https://youtube.com/shorts/PmUwi8E_bzk?si=JvOZImqT27_dxy6qK") 
+    st.video("https://youtube.com/shorts/UyeVqTkuPAM?si=G1AJoxY2dDwELXPT") 
     
     st.write("### 🧠 Engineering Pulse Check")
     q1 = st.radio("What was the visionary idea that Space Shuttle Columbia was built for??", ["Rapid Transit to the Moon", "Unmanned Mars MIssion", "FIrst Re-Usable Spacecraft"], index=None)
@@ -81,4 +81,5 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
 
