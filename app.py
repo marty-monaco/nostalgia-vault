@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd  # <--- MUST HAVE THIS
+import os             # <--- MUST HAVE THIS
 from datetime import datetime
 
 # --- APP CONFIG ---
@@ -79,3 +81,4 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
