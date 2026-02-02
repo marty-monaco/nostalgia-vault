@@ -59,7 +59,26 @@ with st.container():
         if not class_code or not student_id or q1 is None:
             st.error("Please answer the questions and provide your ID.")
         else:
-            # For now, we simulate success without the buggy Sheets connection
+            # 1. Create the data row
+            new_data = {
+                "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                "Class": [class_code],
+                "Student": [student_id],
+                "Topic": [topic],
+                "Q1": [q1],
+                "Q2": [q2],
+                "Interest": [interest]
+            }
+            new_df = pd.DataFrame(new_data)
+
+            # 2. Save to CSV (This is the missing "Engine"!)
+            # If the file doesn't exist, create it with headers. 
+            # If it does, append the new row.
+            if not os.path.isfile("vault_data.csv"):
+                new_df.to_csv("vault_data.csv", index=False)
+            else:
+                new_df.to_csv("vault_data.csv", mode='a', header=False, index=False)
+
             st.success(f"Success! Your {topic} data has been logged to the Vault.")
             st.balloons()
             
@@ -81,6 +100,7 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
 
 
 
