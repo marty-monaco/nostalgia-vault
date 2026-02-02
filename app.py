@@ -21,7 +21,7 @@ topic = st.sidebar.selectbox("Select a Vault Story", ["DNA Fingerprinting", "The
 # --- DYNAMIC CONTENT LOGIC ---
 if topic == "DNA Fingerprinting":
     st.subheader("🧬 The Biological Barcode")
-    st.video("https://youtube.com/shorts/T_UJBPRYvcg?si=wMzt-I5iB0eLs0cN") 
+    st.video("https://www.youtube.com/watch?v=DjQ2PAgUcM8") 
     
     st.write("### 🧠 DNA Pulse Check")
     q1 = st.radio("Who made the discovery that DNA was as unique as a fingerprint?", ["Dr Alec Jeffries", "Dr Henry Lees", "Dr Michael Baden"], index=None)
@@ -81,5 +81,6 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
 
 
