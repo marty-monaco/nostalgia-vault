@@ -12,40 +12,38 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- APP NAVIGATION (The Scalable Part) ---
+# --- APP NAVIGATION ---
 st.title("⚡ The Nostalgia Vault")
-topic = st.sidebar.selectbox("Select a Vault Story", ["DNA Fingerprinting", "Pac-Man 45th", "Acid Washed Jeans"])
-
-st.divider()
+topic = st.sidebar.selectbox("Select a Vault Story", ["DNA Fingerprinting", "The Titanic", "The Space Shuttle Columbia"])
 
 # --- DYNAMIC CONTENT LOGIC ---
 if topic == "DNA Fingerprinting":
     st.subheader("🧬 The Biological Barcode")
-    st.video("https://www.youtube.com/watch?v=dQw4w9WgXcQ") # Replace with your DNA short link
+    st.video("https://youtube.com/shorts/YOUR_DNA_LINK") 
     
     st.write("### 🧠 DNA Pulse Check")
-    q1 = st.radio("What acts as the 'molecular scissors'?", ["Pumice Stones", "Restriction Enzymes", "Electrical Current"], index=None)
-    q2 = st.radio("How does the DNA move through the gel?", ["Magnetic Pull", "Electrical Charge", "Gravity"], index=None)
+    q1 = st.radio("What acts as the 'molecular scissors' that cut DNA strands?", ["Restriction Enzymes", "Electrical Currents", "Pumice Stones"], index=None)
+    q2 = st.radio("True or False: Smaller DNA fragments move faster through the gel than larger ones.", ["True", "False"], index=None)
     interest = st.select_slider("Rate your interest in Forensic Science:", options=["1", "2", "3", "4", "5"], value="3")
 
-elif topic == "Pac-Man 45th":
-    st.subheader("🕹️ Ghost in the Machine")
-    st.video("https://www.youtube.com/watch?v=dQw4w9WgXcQ") # Replace with your Pac-Man short link
+elif topic == "The Titanic":
+    st.subheader("🚢 The Unsinkable Physics")
+    st.video("https://youtube.com/shorts/YOUR_TITANIC_LINK") 
     
-    st.write("### 🧠 Arcade Pulse Check")
-    q1 = st.radio("Which ghost is programmed to 'ambush' by aiming ahead?", ["Blinky (Red)", "Pinky (Pink)", "Clyde (Orange)"], index=None)
-    q2 = st.radio("What causes the Level 256 'Kill Screen'?", ["A virus", "An integer overflow", "A broken button"], index=None)
-    interest = st.select_slider("Rate your interest in Coding/AI:", options=["1", "2", "3", "4", "5"], value="3")
+    st.write("### 🧠 Buoyancy Pulse Check")
+    q1 = st.radio("What force was lost as the Titanic's hull filled with water?", ["Gravity", "Buoyancy", "Magnetism"], index=None)
+    q2 = st.radio("What happens to the density of a ship when its air-filled compartments fill with water?", ["Density Increases", "Density Decreases", "Density Stays Same"], index=None)
+    interest = st.select_slider("Rate your interest in Marine Engineering:", options=["1", "2", "3", "4", "5"], value="3")
 
-elif topic == "Acid Washed Jeans":
-    st.subheader("👖 The Rockstar Accident")
-    st.video("https://www.youtube.com/watch?v=dQw4w9WgXcQ") # Replace with your Acid Wash short link
+elif topic == "The Space Shuttle Columbia":
+    st.subheader("🚀 The Thermal Shield")
+    st.video("https://youtube.com/shorts/PmUwi8E_bzk?si=JvOZImqT27_dxy6qK") 
     
-    st.write("### 🧠 Chemistry Pulse Check")
-    q1 = st.radio("What rock is used to carry the bleach?", ["Granite", "Pumice", "Obsidian"], index=None)
-    q2 = st.radio("What chemical reaction strips the indigo dye?", ["Photosynthesis", "Oxidation", "Fermentation"], index=None)
-    interest = st.select_slider("Rate your interest in Materials Science:", options=["1", "2", "3", "4", "5"], value="3")
-
+    st.write("### 🧠 Engineering Pulse Check")
+    q1 = st.radio("What was the visionary idea that Space Shuttle Columbia was built for??", ["Rapid Transit to the Moon", "Unmanned Mars MIssion", "FIrst Re-Usable Spacecraft"], index=None)
+    q2 = st.radio("What was the Space Shuttle's biggest challenge?", ["Launch", "Atmospheric Re-entry", "Orbit"], index=None)
+    interest = st.select_slider("Rate your interest in Aerospace Engineering:", options=["1", "2", "3", "4", "5"], value="3")
+    
 # --- UNIFIED SUBMISSION LOGIC ---
 st.divider()
 with st.container():
@@ -63,5 +61,21 @@ with st.container():
             st.success(f"Success! Your {topic} data has been logged to the Vault.")
             st.balloons()
             
-            # This is where we will add the "Quiet Logging" later
-            # It will save to a file or database that doesn't trigger 400 errors
+          # --- ADMIN SECTION (Add this at the bottom of app.py) ---
+st.divider()
+with st.expander("🔐 Admin: Download Data"):
+    if os.path.isfile("vault_data.csv"):
+        with open("vault_data.csv", "rb") as file:
+            st.download_button(
+                label="Download CSV for Analysis",
+                data=file,
+                file_name=f"vault_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+        
+        # Optional: Show a preview of the last 5 entries
+        st.write("### Recent Activity Preview")
+        df_preview = pd.read_csv("vault_data.csv")
+        st.dataframe(df_preview.tail(5))
+    else:
+        st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
