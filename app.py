@@ -21,7 +21,7 @@ topic = st.sidebar.selectbox("Select a Vault Story", ["DNA Fingerprinting", "The
 # --- DYNAMIC CONTENT LOGIC ---
 if topic == "DNA Fingerprinting":
     st.subheader("🧬 The Biological Barcode")
-    st.video("https://www.youtube.com/shorts/T_UJBPRYvcg") 
+    st.video("https://www.youtube.com/watch?v=T_UJBPRYvcg") 
     
     st.write("### 🧠 DNA Pulse Check")
     q1 = st.radio("Who made the discovery that DNA was as unique as a fingerprint?", ["Dr Alec Jeffries", "Dr Henry Lees", "Dr Michael Baden"], index=None)
@@ -30,7 +30,7 @@ if topic == "DNA Fingerprinting":
 
 elif topic == "The Titanic":
     st.subheader("🚢 The Unsinkable Physics")
-    st.video("https://www.youtube.com/shorts/UyeVqTkuPAM") 
+    st.video("https://www.youtube.com/watch?v=UyeVqTkuPAM") 
     
     st.write("### 🧠 Buoyancy Pulse Check")
     q1 = st.radio("What method did Robert Ballard use to search?", ["SONAR", "RADAR", "Argo Robot"], index=None)
@@ -39,7 +39,7 @@ elif topic == "The Titanic":
 
 elif topic == "The Space Shuttle Columbia":
     st.subheader("🚀 The Thermal Shield")
-    st.video("https://www.youtube.com/shorts/PmUwi8E_bzk") 
+    st.video("https://www.youtube.com/watch?v=PmUwi8E_bzk") 
     
     st.write("### 🧠 Engineering Pulse Check")
     q1 = st.radio("What was the visionary idea that Space Shuttle Columbia was built for??", ["Rapid Transit to the Moon", "Unmanned Mars MIssion", "FIrst Re-Usable Spacecraft"], index=None)
@@ -100,6 +100,7 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
 
 
 
