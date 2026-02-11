@@ -67,7 +67,7 @@ with st.container():
                 "Topic": [topic],
                 "Q1": [q1],
                 "Q2": [q2],
-                "NPS_Score": [interest]
+                "NPS_Score": [nps_score]
             }
             new_df = pd.DataFrame(new_data)
 
@@ -100,6 +100,7 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
 
 
 
