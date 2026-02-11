@@ -26,7 +26,7 @@ if topic == "DNA Fingerprinting":
     st.write("### 🧠 DNA Pulse Check")
     q1 = st.radio("Who made the discovery that DNA was as unique as a fingerprint?", ["Dr Alec Jeffries", "Dr Henry Lees", "Dr Michael Baden"], index=None)
     q2 = st.radio("True or False: DNA is now widely used to determine paternity?.", ["True", "False"], index=None)
-    interest = st.select_slider("Rate your interest in Forensic Science:", options=["1", "2", "3", "4", "5"], value="3")
+    nps_score = st.select_slider("How likely are you to recommend The Vault to a friend or classmate?", options=list(range(0, 11)), value=8, help="0 = Not at all likely, 10 = Extremely likely")
 
 elif topic == "The Titanic":
     st.subheader("🚢 The Unsinkable Physics")
@@ -35,7 +35,7 @@ elif topic == "The Titanic":
     st.write("### 🧠 Buoyancy Pulse Check")
     q1 = st.radio("What method did Robert Ballard use to search?", ["SONAR", "RADAR", "Argo Robot"], index=None)
     q2 = st.radio("What was the original reason for the mission?", ["Map the floor of the North Atlantic", "Search for lost Nuclear Subs", "Searching for hydrothermal vents"], index=None)
-    interest = st.select_slider("Rate your interest in Marine Engineering:", options=["1", "2", "3", "4", "5"], value="3")
+    nps_score = st.select_slider("How likely are you to recommend The Vault to a friend or classmate?", options=list(range(0, 11)), value=8, help="0 = Not at all likely, 10 = Extremely likely")
 
 elif topic == "The Space Shuttle Columbia":
     st.subheader("🚀 The Thermal Shield")
@@ -44,7 +44,7 @@ elif topic == "The Space Shuttle Columbia":
     st.write("### 🧠 Engineering Pulse Check")
     q1 = st.radio("What was the visionary idea that Space Shuttle Columbia was built for??", ["Rapid Transit to the Moon", "Unmanned Mars MIssion", "FIrst Re-Usable Spacecraft"], index=None)
     q2 = st.radio("What was the Space Shuttle's biggest challenge?", ["Launch", "Atmospheric Re-entry", "Orbit"], index=None)
-    interest = st.select_slider("Rate your interest in Aerospace Engineering:", options=["1", "2", "3", "4", "5"], value="3")
+    nps_score = st.select_slider("How likely are you to recommend The Vault to a friend or classmate?", options=list(range(0, 11)), value=8, help="0 = Not at all likely, 10 = Extremely likely")
     
 # --- UNIFIED SUBMISSION LOGIC ---
 st.divider()
@@ -67,7 +67,7 @@ with st.container():
                 "Topic": [topic],
                 "Q1": [q1],
                 "Q2": [q2],
-                "Interest": [interest]
+                "NPS_Score": [interest]
             }
             new_df = pd.DataFrame(new_data)
 
@@ -100,6 +100,7 @@ with st.expander("🔐 Admin: Download Data"):
         st.dataframe(df_preview.tail(5))
     else:
         st.info("No data has been collected in the Vault yet. Once a student submits, the file will appear here.")
+
 
 
 
