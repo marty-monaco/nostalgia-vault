@@ -11,6 +11,16 @@ st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="ce
 if 'step' not in st.session_state:
     st.session_state.step = "pre_test"
 
+# --- TOPIC MONITOR ---
+# If the user picks a new topic, reset the step to 'pre_test'
+if 'current_topic' not in st.session_state:
+    st.session_state.current_topic = topic
+
+if st.session_state.current_topic != topic:
+    st.session_state.current_topic = topic
+    st.session_state.step = "pre_test"
+    st.rerun()
+
 # --- CUSTOM CSS ---
 st.markdown("""
     <style>
@@ -132,3 +142,4 @@ with st.expander("🔐 Admin: View Results"):
         df_view = pd.read_csv("vault_data.csv")
         st.dataframe(df_view.tail(5))
         st.download_button("Download CSV", data=df_view.to_csv(index=False), file_name="vault_data.csv")
+
