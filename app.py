@@ -3,7 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 
 # This line now looks into that "Secrets" box you just filled out!
 conn = st.connection("gsheets", type=GSheetsConnection)
-df_cms = conn.read(ttl="10m")
+df_cms = conn.read(worksheet="Curriculum", ttl="10m")
 
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="centered")
@@ -109,4 +109,5 @@ elif st.session_state.step == "vault_content":
             if st.button("Start New Topic"):
                 st.session_state.step = "pre_test"
                 st.rerun()
+
 
