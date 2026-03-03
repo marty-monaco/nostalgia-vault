@@ -4,7 +4,7 @@ from streamlit_gsheets import GSheetsConnection
 import os
 from datetime import datetime
 
-# --- 1. APP CONFIG ---
+# --- 1. APP CONFIG ---   
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="centered")
 
 # --- 2. CUSTOM CSS ---
@@ -160,3 +160,4 @@ with st.expander("🔐 Admin: Pilot Data Logs"):
         )
     else:
         st.info("The Vault is awaiting its first student submission.")
+
