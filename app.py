@@ -70,8 +70,18 @@ if df_cms is not None:
         ans_post2 = st.radio(row["Post_Q2"], [row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]], index=None, key="pst2")
         
         st.divider()
-        st.write(f"### 📈 {row['NPS_Question']}")
-        nps_val = st.select_slider("Score", options=list(range(0, 11)), value=8)
+        # HARDCODED NPS QUESTION: Ensures consistency across all Vault Stories
+        nps_q = "On a scale of 0-10, how likely are you to recommend The Vault to a peer or friend?"
+        st.write(f"### 📈 Feedback")
+        st.write(nps_q)
+        
+        # Scale 0-10
+        nps_val = st.select_slider(
+            "Slide to select your score:", 
+            options=list(range(0, 11)), 
+            value=8,
+            help="0 = Not at all likely, 10 = Extremely likely"
+        )
 
         if st.button("SUBMIT TO THE VAULT 🚀"):
             if ans_post1 is None or ans_post2 is None:
@@ -94,3 +104,4 @@ if df_cms is not None:
                 
                 st.success(f"Mastery Logged! Knowledge Lift: {score_post - score_pre}")
                 st.balloons()
+
