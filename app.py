@@ -6,7 +6,7 @@ from datetime import datetime
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="wide")
 
-# --- 2. CUSTOM CSS (Neon "Vault" Theme) ---
+# --- 2. CUSTOM CSS ---
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: white; }
@@ -15,14 +15,10 @@ st.markdown("""
         font-weight: bold; width: 100%; border: none; padding: 12px;
     }
     .stButton>button:hover { background-color: #00ffff; color: black; }
-    .metric-card {
-        background-color: #1a1c24; border: 1px solid #ff00ff;
-        padding: 20px; border-radius: 10px; text-align: center;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. DATA ORCHESTRATION (The Pandas Direct Method) ---
+# --- 3. DATA ORCHESTRATION ---
 @st.cache_data(ttl=60)
 def load_cms_data():
     try:
@@ -35,19 +31,17 @@ def load_cms_data():
 
 df_cms = load_cms_data()
 
-# --- 4. NAVIGATION & SIDEBAR ---
+# --- 4. NAVIGATION ---
 st.sidebar.title("⚡ THE VAULT")
 nav = st.sidebar.radio("Navigation", ["Learning Portal", "Pilot Summary (Admin)"])
 
 if df_cms is not None:
     topic_list = df_cms["Topic"].tolist()
     
-    # --- 5. PAGE: LEARNING PORTAL ---
     if nav == "Learning Portal":
         topic = st.sidebar.selectbox("Select a Vault Story", topic_list)
         row = df_cms[df_cms["Topic"] == topic].iloc[0]
 
-        # Reset logic if topic changes
         if 'current_topic' not in st.session_state or st.session_state.current_topic != topic:
             st.session_state.current_topic = topic
             st.session_state.step = "pre_test"
@@ -55,19 +49,17 @@ if df_cms is not None:
         # STEP 1: PRE-TEST
         if st.session_state.step == "pre_test":
             st.title(f"🔍 Pre-Assessment: {topic}")
-            st.info("Establish your baseline before entering the Vault.")
-            
             ans_pre1 = st.radio(row["Pre_Q1"], [row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]], index=None, key="p1")
             ans_pre2 = st.radio(row["Pre_Q2"], [row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]], index=None, key="p2")
             
             st.divider()
             col1, col2 = st.columns(2)
-            with col1: class_code = st.text_input("Class Code (e.g., IVY-HS-101)")
+            with col1: class_code = st.text_input("Class Code")
             with col2: student_id = st.text_input("Student Initials")
 
             if st.button("ENTER THE VAULT ⚡"):
                 if not class_code or not student_id or ans_pre1 is None or ans_pre2 is None:
-                    st.warning("Please complete all fields to proceed.")
+                    st.warning("Please complete all fields.")
                 else:
                     st.session_state.update({"class_code": class_code, "student_id": student_id, 
                                             "ans_pre1": ans_pre1, "ans_pre2": ans_pre2, "step": "vault_content"})
@@ -77,4 +69,55 @@ if df_cms is not None:
         elif st.session_state.step == "vault_content":
             st.title(f"⚡ {topic}")
             v_url = str(row.get("Video_URL", "")).strip()
-            final_video = v_url if v_url != "nan" and v_url !=
+            # FIXED SYNTAX HERE
+            final_video = v_url if v_url != "nan" and v_url != "" else "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            st.video(final_video)
+            
+            st.write("### 🧠 Pulse Check")
+            ans_post1 = st.radio(row["Post_Q1"], [row["Post_Opt1"], row["Post_Opt2"], row["Post_Opt3"]], index=None, key="pst1")
+            ans_post2 = st.radio(row["Post_Q2"], [row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]], index=None, key="pst2")
+            
+            st.divider()
+            nps_val = st.select_slider("How likely are you to recommend The Vault to a peer?", options=list(range(0, 11)), value=8)
+
+            if st.button("LOG MASTERY & FINISH 🚀"):
+                if ans_post1 is None or ans_post2 is None:
+                    st.error("Please complete the Pulse Check.")
+                else:
+                    score_pre = (1 if st.session_state.ans_pre1 == row.get("Pre_A1") else 0) + (1 if st.session_state.ans_pre2 == row.get("Pre_A2") else 0)
+                    score_post = (1 if ans_post1 == row.get("Post_A1") else 0) + (1 if ans_post2 == row.get("Post_A2") else 0)
+                    lift = score_post - score_pre
+                    
+                    final_record = {
+                        "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                        "Class": [st.session_state.class_code], "Student": [st.session_state.student_id],
+                        "Topic": [topic], "Pre_Score": [score_pre], "Post_Score": [score_post],
+                        "Lift": [lift], "NPS": [nps_val]
+                    }
+                    
+                    pd.DataFrame(final_record).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
+                    st.success(f"Mastery Logged! Knowledge Lift: {lift} pts")
+                    st.balloons()
+                    if st.button("Start New Topic"):
+                        st.session_state.step = "pre_test"
+                        st.rerun()
+
+    # --- 6. PAGE: PILOT SUMMARY ---
+    elif nav == "Pilot Summary (Admin)":
+        st.title("🔐 Pilot Summary & Mastery Dashboard")
+        if os.path.isfile("vault_data.csv"):
+            df_log = pd.read_csv("vault_data.csv")
+            m1, m2, m3, m4 = st.columns(4)
+            with m1: st.metric("Learners Engaged", len(df_log))
+            with m2: st.metric("Avg. Pre-Test", f"{df_log['Pre_Score'].mean():.1f}/2")
+            with m3: st.metric("Avg. Knowledge Lift", f"{df_log['Lift'].mean():+.1f} pts")
+            
+            promoters = len(df_log[df_log['NPS'] >= 9])
+            detractors = len(df_log[df_log['NPS'] <= 6])
+            nps_score = ((promoters - detractors) / len(df_log)) * 100 if len(df_log) > 0 else 0
+            with m4: st.metric("Platform NPS", f"{int(nps_score)}")
+
+            st.dataframe(df_log.sort_values(by="Timestamp", ascending=False), use_container_width=True)
+            st.download_button("📥 Export CSV", df_log.to_csv(index=False), "vault_pilot_data.csv")
+        else:
+            st.warning("No pilot data found yet.")
