@@ -80,24 +80,46 @@ if df_cms is not None:
             st.divider()
             nps_val = st.select_slider("How likely are you to recommend The Vault to a peer?", options=list(range(0, 11)), value=8)
 
-            if st.button("LOG MASTERY & FINISH 🚀"):
+           if st.button("LOG MASTERY & FINISH 🚀"):
                 if ans_post1 is None or ans_post2 is None:
                     st.error("Please complete the Pulse Check.")
                 else:
-                    score_pre = (1 if st.session_state.ans_pre1 == row.get("Pre_A1") else 0) + (1 if st.session_state.ans_pre2 == row.get("Pre_A2") else 0)
-                    score_post = (1 if ans_post1 == row.get("Post_A1") else 0) + (1 if ans_post2 == row.get("Post_A2") else 0)
-                    lift = score_post - score_pre
+                    # --- DUPLICATE CHECK LOGIC ---
+                    is_duplicate = False
+                    if os.path.isfile("vault_data.csv"):
+                        existing_df = pd.read_csv("vault_data.csv")
+                        # Check if this student has already submitted for THIS topic in THIS class
+                        duplicate_check = existing_df[
+                            (existing_df['Student'] == st.session_state.student_id) & 
+                            (existing_df['Topic'] == topic) &
+                            (existing_df['Class'] == st.session_state.class_code)
+                        ]
+                        if not duplicate_check.empty:
+                            is_duplicate = True
+
+                    if is_duplicate:
+                        st.warning(f"⚡ Mastery already logged! {st.session_state.student_id}, you have already completed the {topic} vault for this class.")
+                    else:
+                        # MASTERY TRACKER LOGIC
+                        score_pre = (1 if st.session_state.ans_pre1 == row.get("Pre_A1") else 0) + (1 if st.session_state.ans_pre2 == row.get("Pre_A2") else 0)
+                        score_post = (1 if ans_post1 == row.get("Post_A1") else 0) + (1 if ans_post2 == row.get("Post_A2") else 0)
+                        lift = score_post - score_pre
+                        
+                        final_record = {
+                            "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                            "Class": [st.session_state.class_code],
+                            "Student": [st.session_state.student_id],
+                            "Topic": [topic],
+                            "Pre_Score": [score_pre],
+                            "Post_Score": [score_post],
+                            "Lift": [lift],
+                            "NPS": [nps_val]
+                        }
+                        
+                        pd.DataFrame(final_record).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
+                        st.success(f"Mastery Logged! Knowledge Lift: {lift} pts")
+                        st.balloons()
                     
-                    final_record = {
-                        "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                        "Class": [st.session_state.class_code], "Student": [st.session_state.student_id],
-                        "Topic": [topic], "Pre_Score": [score_pre], "Post_Score": [score_post],
-                        "Lift": [lift], "NPS": [nps_val]
-                    }
-                    
-                    pd.DataFrame(final_record).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
-                    st.success(f"Mastery Logged! Knowledge Lift: {lift} pts")
-                    st.balloons()
                     if st.button("Start New Topic"):
                         st.session_state.step = "pre_test"
                         st.rerun()
@@ -121,3 +143,4 @@ if df_cms is not None:
             st.download_button("📥 Export CSV", df_log.to_csv(index=False), "vault_pilot_data.csv")
         else:
             st.warning("No pilot data found yet.")
+
