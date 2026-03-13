@@ -69,7 +69,6 @@ if df_cms is not None:
         elif st.session_state.step == "vault_content":
             st.title(f"⚡ {topic}")
             v_url = str(row.get("Video_URL", "")).strip()
-            # FIXED SYNTAX HERE
             final_video = v_url if v_url != "nan" and v_url != "" else "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
             st.video(final_video)
             
@@ -80,11 +79,11 @@ if df_cms is not None:
             st.divider()
             nps_val = st.select_slider("How likely are you to recommend The Vault to a peer?", options=list(range(0, 11)), value=8)
 
-           if st.button("LOG MASTERY & FINISH 🚀"):
+            # --- SUBMIT SECTION WITH DUPLICATE CHECK ---
+            if st.button("LOG MASTERY & FINISH 🚀"):
                 if ans_post1 is None or ans_post2 is None:
                     st.error("Please complete the Pulse Check.")
                 else:
-                    # --- DUPLICATE CHECK LOGIC ---
                     is_duplicate = False
                     if os.path.isfile("vault_data.csv"):
                         existing_df = pd.read_csv("vault_data.csv")
@@ -100,29 +99,24 @@ if df_cms is not None:
                     if is_duplicate:
                         st.warning(f"⚡ Mastery already logged! {st.session_state.student_id}, you have already completed the {topic} vault for this class.")
                     else:
-                        # MASTERY TRACKER LOGIC
                         score_pre = (1 if st.session_state.ans_pre1 == row.get("Pre_A1") else 0) + (1 if st.session_state.ans_pre2 == row.get("Pre_A2") else 0)
                         score_post = (1 if ans_post1 == row.get("Post_A1") else 0) + (1 if ans_post2 == row.get("Post_A2") else 0)
                         lift = score_post - score_pre
                         
                         final_record = {
                             "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                            "Class": [st.session_state.class_code],
-                            "Student": [st.session_state.student_id],
-                            "Topic": [topic],
-                            "Pre_Score": [score_pre],
-                            "Post_Score": [score_post],
-                            "Lift": [lift],
-                            "NPS": [nps_val]
+                            "Class": [st.session_state.class_code], "Student": [st.session_state.student_id],
+                            "Topic": [topic], "Pre_Score": [score_pre], "Post_Score": [score_post],
+                            "Lift": [lift], "NPS": [nps_val]
                         }
                         
                         pd.DataFrame(final_record).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
                         st.success(f"Mastery Logged! Knowledge Lift: {lift} pts")
                         st.balloons()
-                    
-                    if st.button("Start New Topic"):
-                        st.session_state.step = "pre_test"
-                        st.rerun()
+            
+            if st.button("Start New Topic"):
+                st.session_state.step = "pre_test"
+                st.rerun()
 
     # --- 6. PAGE: PILOT SUMMARY ---
     elif nav == "Pilot Summary (Admin)":
@@ -134,6 +128,7 @@ if df_cms is not None:
             with m2: st.metric("Avg. Pre-Test", f"{df_log['Pre_Score'].mean():.1f}/2")
             with m3: st.metric("Avg. Knowledge Lift", f"{df_log['Lift'].mean():+.1f} pts")
             
+            # Simple NPS Calculation
             promoters = len(df_log[df_log['NPS'] >= 9])
             detractors = len(df_log[df_log['NPS'] <= 6])
             nps_score = ((promoters - detractors) / len(df_log)) * 100 if len(df_log) > 0 else 0
@@ -143,4 +138,5 @@ if df_cms is not None:
             st.download_button("📥 Export CSV", df_log.to_csv(index=False), "vault_pilot_data.csv")
         else:
             st.warning("No pilot data found yet.")
+
 
