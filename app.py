@@ -46,9 +46,11 @@ if df_cms is not None:
             st.session_state.current_topic = topic
             st.session_state.step = "pre_test"
 
-        # STEP 1: PRE-TEST
+       # STEP 1: PRE-TEST
         if st.session_state.step == "pre_test":
             st.title(f"🔍 Pre-Assessment: {topic}")
+            
+            # (Your existing Radio buttons for ans_pre1 and ans_pre2 here...)
             ans_pre1 = st.radio(row["Pre_Q1"], [row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]], index=None, key="p1")
             ans_pre2 = st.radio(row["Pre_Q2"], [row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]], index=None, key="p2")
             
@@ -61,23 +63,29 @@ if df_cms is not None:
                 if not class_code or not student_id or ans_pre1 is None or ans_pre2 is None:
                     st.warning("Please complete all fields.")
                 else:
-                    st.session_state.update({"class_code": class_code, "student_id": student_id, 
-                                            "ans_pre1": ans_pre1, "ans_pre2": ans_pre2, "step": "vault_content"})
+                    # NEW: We "Lock" the video URL here to prevent blank loads
+                    video_to_load = str(row.get("Video_URL", "")).strip()
+                    if not video_to_load.startswith("http") or video_to_load == "nan":
+                         video_to_load = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Standard Fallback
+                    
+                    st.session_state.update({
+                        "class_code": class_code, 
+                        "student_id": student_id, 
+                        "ans_pre1": ans_pre1, 
+                        "ans_pre2": ans_pre2, 
+                        "vault_video": video_to_load, # LOCKED URL
+                        "step": "vault_content"
+                    })
                     st.rerun()
 
         # STEP 2: VIDEO & PULSE CHECK
         elif st.session_state.step == "vault_content":
             st.title(f"⚡ {topic}")
-            v_url = str(row.get("Video_URL", "")).strip()
-            final_video = v_url if v_url != "nan" and v_url != "" else "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-            st.video(final_video)
             
-            st.write("### 🧠 Pulse Check")
-            ans_post1 = st.radio(row["Post_Q1"], [row["Post_Opt1"], row["Post_Opt2"], row["Post_Opt3"]], index=None, key="pst1")
-            ans_post2 = st.radio(row["Post_Q2"], [row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]], index=None, key="pst2")
+            # Use the "Locked" video from session state
+            st.video(st.session_state.vault_video)
             
-            st.divider()
-            nps_val = st.select_slider("How likely are you to recommend The Vault to a peer?", options=list(range(0, 11)), value=8)
+            # (Rest of the Pulse Check radio buttons and Submit logic...)
 
             # --- SUBMIT SECTION WITH DUPLICATE CHECK ---
             if st.button("LOG MASTERY & FINISH 🚀"):
@@ -160,6 +168,7 @@ if df_cms is not None:
             st.download_button("📥 Export CSV", df_log.to_csv(index=False), "vault_pilot_data.csv")
         else:
             st.warning("No pilot data found yet. Complete a session in the Learning Portal to generate insights.")
+
 
 
 
