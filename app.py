@@ -6,32 +6,22 @@ from datetime import datetime
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="wide")
 
-# --- 2. CUSTOM CSS ---
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; color: white; }
-    .stButton>button { 
-        background-color: #ff00ff; color: white; border-radius: 8px; 
-        font-weight: bold; width: 100%; border: none; padding: 12px;
-    }
-    .stButton>button:hover { background-color: #00ffff; color: black; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 3. DATA ORCHESTRATION ---
+# --- 2. DATA LOADING ---
 @st.cache_data(ttl=60)
 def load_cms_data():
     try:
         raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
         csv_url = raw_url.replace('/edit?usp=sharing', '/export?format=csv').split('/edit')[0] + '/export?format=csv&gid=0'
         return pd.read_csv(csv_url)
-    except Exception as e:
-        st.error(f"Vault Connection Error: {e}")
+    except:
         return None
 
 df_cms = load_cms_data()
 
-# --- 4. NAVIGATION ---
+# --- 3. NAVIGATION & SESSION INITIALIZATION ---
+if 'step' not in st.session_state:
+    st.session_state.step = "pre_test"
+
 st.sidebar.title("⚡ THE VAULT")
 nav = st.sidebar.radio("Navigation", ["Learning Portal", "Pilot Summary (Admin)"])
 
@@ -39,135 +29,98 @@ if df_cms is not None:
     topic_list = df_cms["Topic"].tolist()
     
     if nav == "Learning Portal":
-        topic = st.sidebar.selectbox("Select a Vault Story", topic_list)
-        row = df_cms[df_cms["Topic"] == topic].iloc[0]
-
-        if 'current_topic' not in st.session_state or st.session_state.current_topic != topic:
-            st.session_state.current_topic = topic
+        # SIDEBAR SELECTION
+        topic_choice = st.sidebar.selectbox("Select a Vault Story", topic_list)
+        
+        # Reset if they switch topics mid-stream
+        if 'active_topic' not in st.session_state or st.session_state.active_topic != topic_choice:
+            st.session_state.active_topic = topic_choice
             st.session_state.step = "pre_test"
-
-       # STEP 1: PRE-TEST
-        if st.session_state.step == "pre_test":
-            st.title(f"🔍 Pre-Assessment: {topic}")
             
-            # (Your existing Radio buttons for ans_pre1 and ans_pre2 here...)
-            ans_pre1 = st.radio(row["Pre_Q1"], [row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]], index=None, key="p1")
-            ans_pre2 = st.radio(row["Pre_Q2"], [row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]], index=None, key="p2")
+        # PULL THE ROW ONCE PER RERUN
+        current_row = df_cms[df_cms["Topic"] == st.session_state.active_topic].iloc[0]
+
+        # --- STEP 1: PRE-TEST ---
+        if st.session_state.step == "pre_test":
+            st.title(f"🔍 Pre-Assessment: {st.session_state.active_topic}")
+            
+            p1 = st.radio(current_row["Pre_Q1"], [current_row["Pre_Opt1"], current_row["Pre_Opt2"], current_row["Pre_Opt3"]], index=None)
+            p2 = st.radio(current_row["Pre_Q2"], [current_row["Pre_Opt1_Q2"], current_row["Pre_Opt2_Q2"], current_row["Pre_Opt3_Q2"]], index=None)
             
             st.divider()
-            col1, col2 = st.columns(2)
-            with col1: class_code = st.text_input("Class Code")
-            with col2: student_id = st.text_input("Student Initials")
+            c1, c2 = st.columns(2)
+            with c1: class_code = st.text_input("Class Code")
+            with c2: student_id = st.text_input("Student Initials")
 
             if st.button("ENTER THE VAULT ⚡"):
-                if not class_code or not student_id or ans_pre1 is None or ans_pre2 is None:
+                if not class_code or not student_id or p1 is None or p2 is None:
                     st.warning("Please complete all fields.")
                 else:
-                    # NEW: We "Lock" the video URL here to prevent blank loads
-                    video_to_load = str(row.get("Video_URL", "")).strip()
-                    if not video_to_load.startswith("http") or video_to_load == "nan":
-                         video_to_load = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Standard Fallback
-                    
                     st.session_state.update({
-                        "class_code": class_code, 
-                        "student_id": student_id, 
-                        "ans_pre1": ans_pre1, 
-                        "ans_pre2": ans_pre2, 
-                        "vault_video": video_to_load, # LOCKED URL
-                        "step": "vault_content"
+                        "class_code": class_code, "student_id": student_id,
+                        "ans_pre1": p1, "ans_pre2": p2, "step": "vault_content"
                     })
                     st.rerun()
 
-        # STEP 2: VIDEO & PULSE CHECK
+        # --- STEP 2: VIDEO & PULSE CHECK ---
         elif st.session_state.step == "vault_content":
-            st.title(f"⚡ {topic}")
+            st.title(f"⚡ {st.session_state.active_topic}")
             
-            # Use the "Locked" video from session state
-            st.video(st.session_state.vault_video)
+            # VIDEO LOGIC
+            v_link = str(current_row.get("Video_URL", "")).strip()
+            final_v = v_link if v_link.startswith("http") else "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            st.video(final_v)
             
-            # (Rest of the Pulse Check radio buttons and Submit logic...)
+            st.divider()
+            st.write("### 🧠 Pulse Check")
+            
+            # THE QUESTIONS (Re-referenced from current_row)
+            pst1 = st.radio(current_row["Post_Q1"], [current_row["Post_Opt1"], current_row["Post_Opt2"], current_row["Post_Opt3"]], index=None)
+            pst2 = st.radio(current_row["Post_Q2"], [current_row["Post_Opt1_Q2"], current_row["Post_Opt2_Q2"], current_row["Post_Opt3_Q2"]], index=None)
+            
+            st.divider()
+            nps = st.select_slider("Would you recommend The Vault?", options=list(range(0, 11)), value=8)
 
-            # --- SUBMIT SECTION WITH DUPLICATE CHECK ---
             if st.button("LOG MASTERY & FINISH 🚀"):
-                if ans_post1 is None or ans_post2 is None:
-                    st.error("Please complete the Pulse Check.")
+                if pst1 is None or pst2 is None:
+                    st.error("Please answer the Pulse Check.")
                 else:
-                    is_duplicate = False
+                    # DUPLICATE CHECK
+                    is_dup = False
                     if os.path.isfile("vault_data.csv"):
-                        existing_df = pd.read_csv("vault_data.csv")
-                        # Check if this student has already submitted for THIS topic in THIS class
-                        duplicate_check = existing_df[
-                            (existing_df['Student'] == st.session_state.student_id) & 
-                            (existing_df['Topic'] == topic) &
-                            (existing_df['Class'] == st.session_state.class_code)
-                        ]
-                        if not duplicate_check.empty:
-                            is_duplicate = True
+                        hist = pd.read_csv("vault_data.csv")
+                        if not hist[(hist['Student']==st.session_state.student_id) & (hist['Topic']==st.session_state.active_topic)].empty:
+                            is_dup = True
 
-                    if is_duplicate:
-                        st.warning(f"⚡ Mastery already logged! {st.session_state.student_id}, you have already completed the {topic} vault for this class.")
+                    if is_dup:
+                        st.warning("Mastery already logged for this topic.")
                     else:
-                        score_pre = (1 if st.session_state.ans_pre1 == row.get("Pre_A1") else 0) + (1 if st.session_state.ans_pre2 == row.get("Pre_A2") else 0)
-                        score_post = (1 if ans_post1 == row.get("Post_A1") else 0) + (1 if ans_post2 == row.get("Post_A2") else 0)
-                        lift = score_post - score_pre
+                        # CALCULATE SCORES
+                        s_pre = (1 if st.session_state.ans_pre1 == current_row["Pre_A1"] else 0) + (1 if st.session_state.ans_pre2 == current_row["Pre_A2"] else 0)
+                        s_post = (1 if pst1 == current_row["Post_A1"] else 0) + (1 if pst2 == current_row["Post_A2"] else 0)
                         
-                        final_record = {
-                            "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                            "Class": [st.session_state.class_code], "Student": [st.session_state.student_id],
-                            "Topic": [topic], "Pre_Score": [score_pre], "Post_Score": [score_post],
-                            "Lift": [lift], "NPS": [nps_val]
-                        }
-                        
-                        pd.DataFrame(final_record).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
-                        st.success(f"Mastery Logged! Knowledge Lift: {lift} pts")
+                        # SAVE
+                        res = {"Timestamp": [datetime.now()], "Class": [st.session_state.class_code], 
+                               "Student": [st.session_state.student_id], "Topic": [st.session_state.active_topic],
+                               "Pre_Score": [s_pre], "Post_Score": [s_post], "Lift": [s_post - s_pre], "NPS": [nps]}
+                        pd.DataFrame(res).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
+                        st.success(f"Mastery Logged! Lift: {s_post - s_pre}")
                         st.balloons()
-            
-            if st.button("Start New Topic"):
+
+            if st.button("Return to Start"):
                 st.session_state.step = "pre_test"
                 st.rerun()
 
-    # --- 6. PAGE: PILOT SUMMARY (ADMIN) ---
+    # --- 4. ADMIN DASHBOARD ---
     elif nav == "Pilot Summary (Admin)":
-        st.title("🔐 Pilot Summary & Mastery Dashboard")
-        
+        st.title("🔐 Pilot Summary Dashboard")
         if os.path.isfile("vault_data.csv"):
             df_log = pd.read_csv("vault_data.csv")
-            
-            # --- TOP ROW: KPI METRICS ---
-            m1, m2, m3, m4 = st.columns(4)
-            with m1: st.metric("Learners Engaged", len(df_log))
-            with m2: st.metric("Avg. Pre-Test", f"{df_log['Pre_Score'].mean():.2f}/2")
-            with m3: st.metric("Avg. Post-Test", f"{df_log['Post_Score'].mean():.2f}/2")
-            
-            # Aggregate Lift Calculation
-            total_lift = df_log['Lift'].mean()
-            with m4: st.metric("Avg. Knowledge Lift", f"{total_lift:+.2f} pts", delta=f"{total_lift:+.2f}")
-
-            st.divider()
-
-            # --- NEW: MASTERY SUMMARY ROW (BY TOPIC) ---
-            st.subheader("📊 Mastery Summary by Topic")
-            # This groups the data so Mary can see which specific CJ topic is performing best
-            summary_df = df_log.groupby('Topic').agg({
-                'Student': 'count',
-                'Pre_Score': 'mean',
-                'Post_Score': 'mean',
-                'Lift': 'mean',
-                'NPS': 'mean'
-            }).rename(columns={'Student': 'Total Learners', 'NPS': 'Avg NPS'})
-            
-            # Format for readability
-            st.dataframe(summary_df.style.format("{:.2f}", subset=['Pre_Score', 'Post_Score', 'Lift', 'Avg NPS']), use_container_width=True)
-
-            st.divider()
-            
-            # --- DETAILED LOGS ---
-            st.subheader("📜 Detailed Student Logs")
-            st.dataframe(df_log.sort_values(by="Timestamp", ascending=False), use_container_width=True)
-            
-            st.download_button("📥 Export CSV", df_log.to_csv(index=False), "vault_pilot_data.csv")
+            st.metric("Avg. Knowledge Lift", f"{df_log['Lift'].mean():+.2f} pts")
+            st.dataframe(df_log, use_container_width=True)
         else:
-            st.warning("No pilot data found yet. Complete a session in the Learning Portal to generate insights.")
+            st.info("No data yet.")
+
 
 
 
