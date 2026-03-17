@@ -118,25 +118,48 @@ if df_cms is not None:
                 st.session_state.step = "pre_test"
                 st.rerun()
 
-    # --- 6. PAGE: PILOT SUMMARY ---
+    # --- 6. PAGE: PILOT SUMMARY (ADMIN) ---
     elif nav == "Pilot Summary (Admin)":
         st.title("🔐 Pilot Summary & Mastery Dashboard")
+        
         if os.path.isfile("vault_data.csv"):
             df_log = pd.read_csv("vault_data.csv")
+            
+            # --- TOP ROW: KPI METRICS ---
             m1, m2, m3, m4 = st.columns(4)
             with m1: st.metric("Learners Engaged", len(df_log))
-            with m2: st.metric("Avg. Pre-Test", f"{df_log['Pre_Score'].mean():.1f}/2")
-            with m3: st.metric("Avg. Knowledge Lift", f"{df_log['Lift'].mean():+.1f} pts")
+            with m2: st.metric("Avg. Pre-Test", f"{df_log['Pre_Score'].mean():.2f}/2")
+            with m3: st.metric("Avg. Post-Test", f"{df_log['Post_Score'].mean():.2f}/2")
             
-            # Simple NPS Calculation
-            promoters = len(df_log[df_log['NPS'] >= 9])
-            detractors = len(df_log[df_log['NPS'] <= 6])
-            nps_score = ((promoters - detractors) / len(df_log)) * 100 if len(df_log) > 0 else 0
-            with m4: st.metric("Platform NPS", f"{int(nps_score)}")
+            # Aggregate Lift Calculation
+            total_lift = df_log['Lift'].mean()
+            with m4: st.metric("Avg. Knowledge Lift", f"{total_lift:+.2f} pts", delta=f"{total_lift:+.2f}")
 
+            st.divider()
+
+            # --- NEW: MASTERY SUMMARY ROW (BY TOPIC) ---
+            st.subheader("📊 Mastery Summary by Topic")
+            # This groups the data so Mary can see which specific CJ topic is performing best
+            summary_df = df_log.groupby('Topic').agg({
+                'Student': 'count',
+                'Pre_Score': 'mean',
+                'Post_Score': 'mean',
+                'Lift': 'mean',
+                'NPS': 'mean'
+            }).rename(columns={'Student': 'Total Learners', 'NPS': 'Avg NPS'})
+            
+            # Format for readability
+            st.dataframe(summary_df.style.format("{:.2f}", subset=['Pre_Score', 'Post_Score', 'Lift', 'Avg NPS']), use_container_width=True)
+
+            st.divider()
+            
+            # --- DETAILED LOGS ---
+            st.subheader("📜 Detailed Student Logs")
             st.dataframe(df_log.sort_values(by="Timestamp", ascending=False), use_container_width=True)
+            
             st.download_button("📥 Export CSV", df_log.to_csv(index=False), "vault_pilot_data.csv")
         else:
-            st.warning("No pilot data found yet.")
+            st.warning("No pilot data found yet. Complete a session in the Learning Portal to generate insights.")
+
 
 
