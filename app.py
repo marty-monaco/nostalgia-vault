@@ -111,15 +111,51 @@ if df_cms is not None:
                 st.session_state.step = "pre_test"
                 st.rerun()
 
-    # --- 4. ADMIN DASHBOARD ---
+  # --- 4. ADMIN DASHBOARD ---
     elif nav == "Pilot Summary (Admin)":
         st.title("🔐 Pilot Summary Dashboard")
+        
         if os.path.isfile("vault_data.csv"):
             df_log = pd.read_csv("vault_data.csv")
-            st.metric("Avg. Knowledge Lift", f"{df_log['Lift'].mean():+.2f} pts")
-            st.dataframe(df_log, use_container_width=True)
+            
+            # --- DETAILED LOGS ---
+            st.subheader("📜 Student Mastery Logs")
+            st.dataframe(df_log.sort_values(by="Timestamp", ascending=False), use_container_width=True)
+            
+            st.divider()
+
+            # --- THE SUMMARY ROW (Mastery Scorecard) ---
+            st.subheader("📊 Pilot Impact Summary")
+            
+            # Calculations
+            avg_pre = df_log['Pre_Score'].mean()
+            avg_post = df_log['Post_Score'].mean()
+            avg_lift = df_log['Lift'].mean()
+            
+            # NPS Calculation (Promoters - Detractors)
+            promoters = len(df_log[df_log['NPS'] >= 9])
+            detractors = len(df_log[df_log['NPS'] <= 6])
+            nps_score = ((promoters - detractors) / len(df_log)) * 100 if len(df_log) > 0 else 0
+
+            # Visual Display
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Total Learners", len(df_log))
+            with c2:
+                st.metric("Avg Pre-Test", f"{avg_pre:.2f}")
+            with c3:
+                # The 'Delta' shows the growth clearly
+                st.metric("Overall Mastery Lift", f"{avg_post:.2f}", delta=f"+{avg_lift:.2f} Gain")
+            with c4:
+                st.metric("Platform NPS", f"{int(nps_score)}")
+
+            st.info(f"💡 On average, students are improving their understanding by {avg_lift:.2f} points per Vault Story.")
+            
+            st.divider()
+            st.download_button("📥 Export CSV for Mary", df_log.to_csv(index=False), "vault_pilot_data.csv")
+            
         else:
-            st.info("No data yet.")
+            st.warning("No pilot data found yet. Data will appear here once the first student submits.")
 
 
 
