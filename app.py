@@ -124,7 +124,7 @@ if df_cms is not None:
             
             st.divider()
 
-            # --- THE SUMMARY ROW (Mastery Scorecard) ---
+            # --- THE SUMMARY ROW ---
             st.subheader("📊 Pilot Impact Summary")
             
             # Calculations
@@ -132,31 +132,44 @@ if df_cms is not None:
             avg_post = df_log['Post_Score'].mean()
             avg_lift = df_log['Lift'].mean()
             
-            # NPS Calculation (Promoters - Detractors)
+            # NPS Calculation
             promoters = len(df_log[df_log['NPS'] >= 9])
             detractors = len(df_log[df_log['NPS'] <= 6])
-            nps_score = ((promoters - detractors) / len(df_log)) * 100 if len(df_log) > 0 else 0
+            total = len(df_log)
+            nps_score = int(((promoters - detractors) / total) * 100) if total > 0 else 0
 
             # Visual Display
             c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("Total Learners", len(df_log))
-            with c2:
-                st.metric("Avg Pre-Test", f"{avg_pre:.2f}")
-            with c3:
-                # The 'Delta' shows the growth clearly
-                st.metric("Overall Mastery Lift", f"{avg_post:.2f}", delta=f"+{avg_lift:.2f} Gain")
-            with c4:
-                st.metric("Platform NPS", f"{int(nps_score)}")
+            with c1: st.metric("Total Learners", total)
+            with c2: st.metric("Avg Pre-Test", f"{avg_pre:.2f}")
+            with c3: st.metric("Overall Mastery Lift", f"{avg_post:.2f}", delta=f"+{avg_lift:.2f} Gain")
+            with c4: st.metric("Platform NPS", nps_score)
 
-            st.info(f"💡 On average, students are improving their understanding by {avg_lift:.2f} points per Vault Story.")
+            # --- NEW: NPS SENTIMENT GAUGE ---
+            st.write("### 🌡️ Platform Sentiment Gauge")
             
+            # Determine Color based on NPS thresholds
+            if nps_score > 50: color = "green"
+            elif nps_score > 0: color = "blue"
+            else: color = "red"
+            
+            # Use a progress bar to simulate a gauge (-100 to +100 normalized to 0-100)
+            normalized_nps = (nps_score + 100) / 200
+            st.progress(normalized_nps)
+            st.caption(f"Current Score: **{nps_score}** | Scale: -100 (Detractor Heavy) to +100 (Promoter Heavy)")
+            
+            if nps_score > 50:
+                st.success("🚀 World Class: Your content is highly viral and engaging!")
+            elif nps_score > 0:
+                st.info("📈 Positive: You have more fans than critics. Good traction.")
+            else:
+                st.warning("⚠️ Improvement Needed: Focus on content engagement to reduce detractors.")
+
             st.divider()
             st.download_button("📥 Export CSV for Mary", df_log.to_csv(index=False), "vault_pilot_data.csv")
             
         else:
-            st.warning("No pilot data found yet. Data will appear here once the first student submits.")
-
+            st.warning("No pilot data found yet.")
 
 
 
