@@ -11,23 +11,25 @@ st.markdown("""
     <style>
         /* Target the Sidebar Chevron (Arrow) */
         [data-testid="stSidebarCollapseIcon"] {
-            width: 50px !important;
-            height: 50px !important;
-            color: #FFD700 !important; /* Gold to match the 'Vault' vibe */
+            width: 55px !important;
+            height: 55px !important;
+            color: #FFD700 !important; /* Gold Vault Color */
         }
         
-        /* Make the tap-able area larger for thumbs */
+        /* Ensure the button background doesn't clip the big icon */
         button[kind="headerNoContext"] {
-            width: 60px !important;
-            height: 60px !important;
+            width: 70px !important;
+            height: 70px !important;
+            background-color: rgba(255, 215, 0, 0.1) !important;
+            border-radius: 10px !important;
         }
 
-        /* Optional: Add a subtle glow so the kids see it immediately */
+        /* Subtle pulse to catch the student's eye */
         [data-testid="stSidebarCollapseIcon"] {
-            filter: drop-shadow(0px 0px 5px rgba(255, 215, 0, 0.5));
+            filter: drop-shadow(0px 0px 8px rgba(255, 215, 0, 0.6));
         }
     </style>
-""", unsafe_content_type=True)
+""", unsafe_allow_html=True)
 
 # --- 2. DATA LOADING (CMS) ---
 @st.cache_data(ttl=60)
