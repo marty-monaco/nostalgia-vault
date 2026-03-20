@@ -6,6 +6,29 @@ from datetime import datetime
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="wide")
 
+# --- CUSTOM CSS FOR MOBILE NAVIGATION ---
+st.markdown("""
+    <style>
+        /* Target the Sidebar Chevron (Arrow) */
+        [data-testid="stSidebarCollapseIcon"] {
+            width: 50px !important;
+            height: 50px !important;
+            color: #FFD700 !important; /* Gold to match the 'Vault' vibe */
+        }
+        
+        /* Make the tap-able area larger for thumbs */
+        button[kind="headerNoContext"] {
+            width: 60px !important;
+            height: 60px !important;
+        }
+
+        /* Optional: Add a subtle glow so the kids see it immediately */
+        [data-testid="stSidebarCollapseIcon"] {
+            filter: drop-shadow(0px 0px 5px rgba(255, 215, 0, 0.5));
+        }
+    </style>
+""", unsafe_content_type=True)
+
 # --- 2. DATA LOADING (CMS) ---
 @st.cache_data(ttl=60)
 def load_cms_data():
