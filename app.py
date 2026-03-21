@@ -6,27 +6,36 @@ from datetime import datetime
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="wide")
 
-# --- CUSTOM CSS FOR MOBILE NAVIGATION ---
+# --- NUCLEAR CSS FOR MOBILE NAVIGATION ---
 st.markdown("""
     <style>
-        /* Target the Sidebar Chevron (Arrow) */
+        /* Force the Sidebar Chevron to be HUGE and GOLD */
         [data-testid="stSidebarCollapseIcon"] {
-            width: 55px !important;
-            height: 55px !important;
-            color: #FFD700 !important; /* Gold Vault Color */
+            width: 80px !important;
+            height: 80px !important;
+            color: #FFD700 !important;
+            fill: #FFD700 !important; /* Ensures the inside of the arrow is gold */
         }
         
-        /* Ensure the button background doesn't clip the big icon */
+        /* Make the actual button a solid dark circle so it stands out */
         button[kind="headerNoContext"] {
-            width: 70px !important;
-            height: 70px !important;
-            background-color: rgba(255, 215, 0, 0.1) !important;
-            border-radius: 10px !important;
+            width: 90px !important;
+            height: 90px !important;
+            background-color: #1A1A1A !important; /* Dark background */
+            border: 3px solid #FFD700 !important; /* Gold border */
+            border-radius: 50% !important; /* Circular button */
+            margin-left: 10px !important;
+            margin-top: 10px !important;
+            z-index: 999999 !important;
         }
 
-        /* Subtle pulse to catch the student's eye */
-        [data-testid="stSidebarCollapseIcon"] {
-            filter: drop-shadow(0px 0px 8px rgba(255, 215, 0, 0.6));
+        /* Add a "Menu" label below the arrow (Experimental) */
+        button[kind="headerNoContext"]::after {
+            content: "MENU";
+            font-size: 12px;
+            color: #FFD700;
+            display: block;
+            margin-top: -10px;
         }
     </style>
 """, unsafe_allow_html=True)
