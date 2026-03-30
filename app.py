@@ -1,28 +1,11 @@
 import streamlit as st
 import pandas as pd
 import os
+import random
 from datetime import datetime
 
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="The Nostalgia Vault", page_icon="⚡", layout="wide")
-
-# Custom Badge Styling
-st.markdown("""
-    <style>
-    .mastery-badge {
-        background-color: #FFD700;
-        color: #1A1A1A;
-        padding: 20px;
-        border-radius: 15px;
-        text-align: center;
-        border: 4px solid #B8860B;
-        font-family: 'Courier New', Courier, monospace;
-        margin-top: 20px;
-    }
-    .badge-initials { font-size: 40px; font-weight: bold; }
-    .badge-title { font-size: 18px; letter-spacing: 2px; }
-    </style>
-""", unsafe_allow_html=True)
 
 # --- 2. DATA LOADING ---
 @st.cache_data(ttl=60)
@@ -42,8 +25,8 @@ if 'step' not in st.session_state:
     st.session_state.step = "pre_test"
 if 'active_topic' not in st.session_state:
     st.session_state.active_topic = None
-if 'start_time' not in st.session_state:
-    st.session_state.start_time = None
+if 'submitted' not in st.session_state:
+    st.session_state.submitted = False # <--- DUPLICATE GUARD
 
 # --- 4. NAVIGATION ---
 st.sidebar.title("⚡ THE VAULT")
@@ -59,6 +42,7 @@ if df_cms is not None:
             if cols[i].button(f"📖 {t}", use_container_width=True):
                 st.session_state.active_topic = t
                 st.session_state.step = "pre_test"
+                st.session_state.submitted = False # Reset guard for new topic
                 st.rerun()
 
         st.divider()
@@ -69,8 +53,13 @@ if df_cms is not None:
             # --- STEP 1: PRE-TEST ---
             if st.session_state.step == "pre_test":
                 st.title(f"🔍 Pre-Assessment: {st.session_state.active_topic}")
-                p1 = st.radio(row["Pre_Q1"], [row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]], index=None, key="p1")
-                p2 = st.radio(row["Pre_Q2"], [row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]], index=None, key="p2")
+                
+                # Randomized Options Logic
+                opts1 = random.sample([row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]], 3)
+                opts2 = random.sample([row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]], 3)
+                
+                p1 = st.radio(row["Pre_Q1"], opts1, index=None, key=f"p1_{st.session_state.active_topic}")
+                p2 = st.radio(row["Pre_Q2"], opts2, index=None, key=f"p2_{st.session_state.active_topic}")
                 
                 st.divider()
                 c1, c2 = st.columns(2)
@@ -98,16 +87,25 @@ if df_cms is not None:
                 
                 st.divider()
                 st.write("### 🧠 Pulse Check")
-                pst1 = st.radio(row["Post_Q1"], [row["Post_Opt1"], row["Post_Opt2"], row["Post_Opt3"]], index=None, key="pst1")
-                pst2 = st.radio(row["Post_Q2"], [row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]], index=None, key="pst2")
+                
+                # Randomized Post Options Logic
+                popts1 = random.sample([row["Post_Opt1"], row["Post_Opt2"], row["Post_Opt3"]], 3)
+                popts2 = random.sample([row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]], 3)
+                
+                pst1 = st.radio(row["Post_Q1"], popts1, index=None, key=f"pst1_{st.session_state.active_topic}")
+                pst2 = st.radio(row["Post_Q2"], popts2, index=None, key=f"pst2_{st.session_state.active_topic}")
                 
                 st.divider()
                 nps = st.select_slider("Would you recommend this Vault Story?", options=list(range(0, 11)), value=8)
 
-                if st.button("LOG MASTERY & FINISH 🚀", use_container_width=True):
+                # --- SUBMIT BUTTON WITH DOUBLE-CLICK PROTECTION ---
+                if st.button("LOG MASTERY & FINISH 🚀", use_container_width=True, disabled=st.session_state.submitted):
                     if pst1 is None or pst2 is None:
                         st.error("Please answer the Pulse Check.")
                     else:
+                        # Lock the button immediately
+                        st.session_state.submitted = True 
+                        
                         end_time = datetime.now()
                         elapsed = (end_time - st.session_state.start_time).total_seconds()
                         target_len = float(row.get("Video_Length_Sec", 85)) 
@@ -116,25 +114,15 @@ if df_cms is not None:
                         s_pre = (1 if st.session_state.ans_pre1 == row["Pre_A1"] else 0) + (1 if st.session_state.ans_pre2 == row["Pre_A2"] else 0)
                         s_post = (1 if pst1 == row["Post_A1"] else 0) + (1 if pst2 == row["Post_A2"] else 0)
                         
-                        # LOG DATA
                         res = {"Timestamp": [end_time], "Class": [st.session_state.class_code], 
                                "Student": [st.session_state.student_id], "Topic": [st.session_state.active_topic],
                                "Pre_Score": [s_pre], "Post_Score": [s_post], "Lift": [s_post - s_pre], 
                                "NPS": [nps], "Duration_Sec": [int(elapsed)], "Status": [status]}
-                        pd.DataFrame(res).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
                         
-                        # REWARD LOGIC
-                        if status == "Completed":
-                            st.balloons()
-                            st.markdown(f"""
-                                <div class="mastery-badge">
-                                    <div class="badge-title">VAULT MASTERY CERTIFIED</div>
-                                    <div class="badge-initials">{st.session_state.student_id.upper()}</div>
-                                    <div class="badge-title">KNOWLEDGE LIFT: +{s_post - s_pre}</div>
-                                </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.warning("Mastery Logged! Note: Full video engagement is required for a Mastery Badge.")
+                        pd.DataFrame(res).to_csv("vault_data.csv", mode='a', header=not os.path.exists("vault_data.csv"), index=False)
+                        st.success(f"Mastery Logged! Lift: {s_post - s_pre}")
+                        st.balloons()
+                        st.rerun() # Refresh to show disabled state and success
 
         else:
             st.info("Choose a story above to begin.")
@@ -146,15 +134,12 @@ if df_cms is not None:
         if pw == "vault2026":
             if os.path.isfile("vault_data.csv"):
                 df = pd.read_csv("vault_data.csv")
-                avg_lift = df['Lift'].mean()
-                avg_time = df['Duration_Sec'].mean()
-                comp_rate = (len(df[df['Status'] == "Completed"]) / len(df)) * 100
-
-                c1, c2, c3, c4 = st.columns(4)
+                
+                # Metrics and Table Display
+                c1, c2, c3 = st.columns(3)
                 c1.metric("Total Learners", len(df))
-                c2.metric("Avg. Lift", f"+{avg_lift:.2f}")
-                c3.metric("Avg. Engagement", f"{int(avg_time)}s")
-                c4.metric("Completion Rate", f"{int(comp_rate)}%")
+                c2.metric("Avg. Lift", f"+{df['Lift'].mean():.2f}")
+                c3.metric("Platform NPS", int(((len(df[df['NPS'] >= 9]) - len(df[df['NPS'] <= 6])) / len(df)) * 100))
 
                 st.divider()
                 st.dataframe(df.sort_values(by="Timestamp", ascending=False), use_container_width=True)
