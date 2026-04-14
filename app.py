@@ -98,7 +98,35 @@ if df_cms is not None:
                     st.write("### 🧠 Pulse Check")
                     pst1 = st.radio(row["Post_Q1"], st.session_state.shuffled_opts["post1"], index=None, key="pst1_rad")
                     pst2 = st.radio(row["Post_Q2"], st.session_state.shuffled_opts["post2"], index=None, key="pst2_rad")
-                    nps = st.select_slider("Would you recommend this Vault Story?", options=list(range(0, 11)), value=8)
+                    st.write("### ⚡ How was this Vault Story?")
+# Custom CSS to make the buttons look like a rating bar
+st.markdown("""
+    <style>
+    div.stButton > button:first-child { background-color: #262730; border: 1px solid #4B4B4B; }
+    div.stButton > button:active { background-color: #FFD700; color: black; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Create 5 distinct buttons to represent the NPS spectrum
+col1, col2, col3, col4, col5 = st.columns(5)
+
+if 'nps_score' not in st.session_state:
+    st.session_state.nps_score = None
+
+with col1:
+    if st.button("😴\nBoring"): st.session_state.nps_score = 2
+with col2:
+    if st.button("😐\nOkay"): st.session_state.nps_score = 5
+with col3:
+    if st.button("😎\nCool"): st.session_state.nps_score = 8
+with col4:
+    if st.button("🔥\nFire"): st.session_state.nps_score = 9
+with col5:
+    if st.button("🏆\nEpic"): st.session_state.nps_score = 10
+
+# Validation display
+if st.session_state.nps_score:
+    st.info(f"Your Rating: {st.session_state.nps_score}/10")
 
                     if st.button("LOG MASTERY & FINISH 🚀", use_container_width=True):
                         if pst1 is None or pst2 is None:
