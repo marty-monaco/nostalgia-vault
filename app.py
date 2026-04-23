@@ -1,3 +1,5 @@
+
+
 import os
 from datetime import datetime, timedelta
 
@@ -44,8 +46,8 @@ def engagement_status(elapsed_sec: float, video_length_sec: float) -> str:
     return "Completed" if elapsed_sec >= video_length_sec * VIDEO_COMPLETION_THRESHOLD else "Skimmed"
 
 
-def append_result(record: dict) -> None:
-    """Append a single result row to the CSV, creating headers if needed."""
+def append_result_csv(record: dict) -> None:
+    """Append a single result row to the local CSV, creating headers if needed."""
     pd.DataFrame([record]).to_csv(
         DATA_FILE,
         mode="a",
@@ -60,7 +62,7 @@ def load_csv() -> pd.DataFrame | None:
         try:
             return pd.read_csv(DATA_FILE)
         except Exception as e:
-            st.error(f"Failed to read data file: {e}")
+            st.error(f"Failed to read local data file: {e}")
     return None
 
 
@@ -93,17 +95,66 @@ def init_session() -> None:
 
 
 # ---------------------------------------------------------------------------
-# DATA LOADING
+# GOOGLE SHEETS  (via st.connection — no Google Cloud account needed)
+# ---------------------------------------------------------------------------
+
+def _get_gsheets_conn():
+    """Return a GSheetsConnection if [connections.gsheets_output] secret exists.
+
+    Add this block to your Streamlit secrets to enable Sheets writing:
+
+        [connections.gsheets_output]
+        spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        type = "url"
+
+    The results sheet must be shared as 'Anyone with the link can edit'.
+    If the secret block is absent, Sheets is skipped silently and only
+    the local CSV is written.
+    """
+    try:
+        _ = st.secrets["connections"]["gsheets_output"]["spreadsheet"]
+    except KeyError:
+        return None  # Not configured — skip silently
+
+    try:
+        return st.connection("gsheets_output", type="gsheets")
+    except Exception as e:
+        st.warning(f"Google Sheets connection failed (data saved to CSV only): {e}")
+        return None
+
+
+def _append_to_gsheet(record: dict) -> None:
+    """Fetch the current sheet, append the new row, and write it back.
+
+    st.connection('gsheets') has no native append — we read, concat, update.
+    Any failure shows a yellow warning but never blocks the CSV save.
+    """
+    conn = _get_gsheets_conn()
+    if conn is None:
+        return
+
+    try:
+        try:
+            existing_df = conn.read(usecols=DATA_COLUMNS, ttl=0)
+        except Exception:
+            existing_df = pd.DataFrame(columns=DATA_COLUMNS)
+
+        new_row = pd.DataFrame([{col: record.get(col, "") for col in DATA_COLUMNS}])
+        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+        conn.update(data=updated_df)
+    except Exception as e:
+        st.warning(f"Google Sheets write failed (data saved to CSV only): {e}")
+
+
+# ---------------------------------------------------------------------------
+# DATA LOADING  (CMS — read-only, existing sheet)
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=60)
 def load_cms_data() -> pd.DataFrame | None:
     try:
         raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        csv_url = (
-            raw_url.split("/edit")[0]
-            + "/export?format=csv&gid=0"
-        )
+        csv_url = raw_url.split("/edit")[0] + "/export?format=csv&gid=0"
         df = pd.read_csv(csv_url)
         if df.empty:
             st.warning("CMS loaded but contains no topics.")
@@ -243,7 +294,7 @@ def _submit_results(row: pd.Series, pst1: str, pst2: str) -> None:
     lift = s_post - s_pre
 
     record = {
-        "Timestamp": ny_now(),
+        "Timestamp": str(ny_now()),
         "Class": st.session_state.class_code,
         "Student": st.session_state.student_id,
         "Topic": st.session_state.active_topic,
@@ -255,17 +306,22 @@ def _submit_results(row: pd.Series, pst1: str, pst2: str) -> None:
         "Status": status,
     }
 
+    csv_ok = True
     try:
-        append_result(record)
+        append_result_csv(record)
     except Exception as e:
-        st.error(f"Failed to save results: {e}")
-        return
+        st.error(f"Failed to save to CSV: {e}")
+        csv_ok = False
 
-    if status == "Completed":
-        st.balloons()
-        render_mastery_badge(st.session_state.student_id, lift)
-    else:
-        st.warning("Mastery logged! Try watching the full video next time to earn a badge.")
+    # Sheets write is best-effort — failure never blocks the user
+    _append_to_gsheet(record)
+
+    if csv_ok:
+        if status == "Completed":
+            st.balloons()
+            render_mastery_badge(st.session_state.student_id, lift)
+        else:
+            st.warning("Mastery logged! Try watching the full video next time to earn a badge.")
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +371,6 @@ def main() -> None:
         render_admin()
         return
 
-    # Learning Portal
     if df_cms is None:
         st.error("Could not load content. Check your CMS connection in secrets.")
         return
@@ -350,4 +405,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
