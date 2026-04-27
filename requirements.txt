@@ -3,4 +3,3 @@ pandas
 st-gsheets-connection
 gspread
 google-auth
-streamlit-gsheets-connection
