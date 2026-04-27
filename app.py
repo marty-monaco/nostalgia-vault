@@ -8,8 +8,8 @@ import streamlit as st
 # CONSTANTS
 # ---------------------------------------------------------------------------
 DATA_FILE = "vault_data.csv"
-ADMIN_PASSWORD = os.getenv("VAULT_ADMIN_PASSWORD", "vault2026")  # Use env var in production
-NY_UTC_OFFSET = timedelta(hours=-4)  # UTC-4 (EDT) — subtract -4 means add 4 hours
+ADMIN_PASSWORD = "vault2026"
+NY_UTC_OFFSET = timedelta(hours=4)
 VIDEO_COMPLETION_THRESHOLD = 0.9
 DEFAULT_VIDEO_LENGTH_SEC = 85
 FALLBACK_VIDEO = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -33,7 +33,7 @@ DATA_COLUMNS = [
 
 def ny_now() -> datetime:
     """Return current time adjusted to US/Eastern (UTC-4 approximation)."""
-    return datetime.utcnow() + NY_UTC_OFFSET
+    return datetime.utcnow() - NY_UTC_OFFSET
 
 
 def score_answers(response1: str, response2: str, correct1: str, correct2: str) -> int:
@@ -44,11 +44,9 @@ def engagement_status(elapsed_sec: float, video_length_sec: float) -> str:
     return "Completed" if elapsed_sec >= video_length_sec * VIDEO_COMPLETION_THRESHOLD else "Skimmed"
 
 
-def append_result_csv(record: dict) -> None:
-    """Append a single result row to the local CSV, creating headers if needed."""
-    # Ensure all required columns are present in the record
-    full_record = {col: record.get(col, "") for col in DATA_COLUMNS}
-    pd.DataFrame([full_record]).to_csv(
+def append_result(record: dict) -> None:
+    """Append a single result row to the CSV, creating headers if needed."""
+    pd.DataFrame([record]).to_csv(
         DATA_FILE,
         mode="a",
         header=not os.path.exists(DATA_FILE),
@@ -62,7 +60,7 @@ def load_csv() -> pd.DataFrame | None:
         try:
             return pd.read_csv(DATA_FILE)
         except Exception as e:
-            st.error(f"Failed to read local data file: {e}")
+            st.error(f"Failed to read data file: {e}")
     return None
 
 
@@ -95,84 +93,21 @@ def init_session() -> None:
 
 
 # ---------------------------------------------------------------------------
-# GOOGLE SHEETS  (via st.connection — no Google Cloud account needed)
-# ---------------------------------------------------------------------------
-
-def _get_gsheets_conn():
-    """Return a GSheetsConnection if [connections.gsheets_output] secret exists.
-
-    Add this block to your Streamlit secrets to enable Sheets writing:
-
-        [connections.gsheets_output]
-        spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
-        type = "url"
-
-    The results sheet must be shared as 'Anyone with the link can edit'.
-    If the secret block is absent, Sheets is skipped silently and only
-    the local CSV is written.
-    """
-    try:
-        _ = st.secrets["connections"]["gsheets_output"]["spreadsheet"]
-    except KeyError:
-        return None  # Not configured — skip silently
-
-    try:
-        return st.connection("gsheets_output", type="gsheets")
-    except Exception as e:
-        st.warning(f"Google Sheets connection failed (data saved to CSV only): {e}")
-        return None
-
-
-def _append_to_gsheet(record: dict) -> None:
-    """Fetch the current sheet, append the new row, and write it back.
-
-    st.connection('gsheets') has no native append — we read, concat, update.
-    Any failure shows a yellow warning but never blocks the CSV save.
-    """
-    conn = _get_gsheets_conn()
-    if conn is None:
-        return
-
-    try:
-        try:
-            existing_df = conn.read(usecols=DATA_COLUMNS, ttl=0)
-        except Exception:
-            existing_df = pd.DataFrame(columns=DATA_COLUMNS)
-
-        new_row = pd.DataFrame([{col: record.get(col, "") for col in DATA_COLUMNS}])
-        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-        conn.update(data=updated_df)
-    except Exception as e:
-        st.warning(f"Google Sheets write failed (data saved to CSV only): {e}")
-
-
-# ---------------------------------------------------------------------------
-# DATA LOADING  (CMS — read-only, existing sheet)
+# DATA LOADING
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=60)
 def load_cms_data() -> pd.DataFrame | None:
     try:
         raw_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        csv_url = raw_url.split("/edit")[0] + "/export?format=csv&gid=0"
+        csv_url = (
+            raw_url.split("/edit")[0]
+            + "/export?format=csv&gid=0"
+        )
         df = pd.read_csv(csv_url)
         if df.empty:
             st.warning("CMS loaded but contains no topics.")
             return None
-        
-        # Validate required columns exist
-        required_cols = [
-            "Topic", "Pre_Q1", "Pre_Q2", "Pre_Opt1", "Pre_Opt2", "Pre_Opt3",
-            "Pre_Opt1_Q2", "Pre_Opt2_Q2", "Pre_Opt3_Q2", "Pre_A1", "Pre_A2",
-            "Post_Q1", "Post_Q2", "Post_Opt1", "Post_Opt2", "Post_Opt3",
-            "Post_Opt1_Q2", "Post_Opt2_Q2", "Post_Opt3_Q2", "Post_A1", "Post_A2",
-            "Video_URL", "Video_Length_Sec"
-        ]
-        missing = [col for col in required_cols if col not in df.columns]
-        if missing:
-            st.error(f"CMS is missing required columns: {', '.join(missing)}")
-            return None
-        
         return df
     except KeyError:
         st.error("Missing `connections.gsheets.spreadsheet` in secrets.")
@@ -213,11 +148,8 @@ def render_nps_selector() -> None:
     st.write("### ⚡ Rate this Vault Story")
     cols = st.columns(len(NPS_OPTIONS))
     for col, (emoji, label, score) in zip(cols, NPS_OPTIONS):
-        with col:
-            # Use unique key to avoid state collisions
-            if st.button(f"{emoji}\n{label}", use_container_width=True, key=f"nps_{score}"):
-                st.session_state.nps_score = score
-                st.rerun()
+        if col.button(f"{emoji}\n{label}", use_container_width=True):
+            st.session_state.nps_score = score
 
     if st.session_state.nps_score is not None:
         st.success(f"Selected Rating: {st.session_state.nps_score}/10")
@@ -230,16 +162,15 @@ def render_nps_selector() -> None:
 def render_pre_test(row: pd.Series) -> None:
     st.title(f"🔍 Pre-Assessment: {st.session_state.active_topic}")
 
-    # Remove key parameters to avoid state collision issues
     p1 = st.radio(
         row["Pre_Q1"],
         [row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]],
-        index=None,
+        index=None, key="p1",
     )
     p2 = st.radio(
         row["Pre_Q2"],
         [row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]],
-        index=None,
+        index=None, key="p2",
     )
 
     st.divider()
@@ -279,16 +210,15 @@ def render_vault_content(row: pd.Series) -> None:
     st.divider()
     st.write("### 🧠 Pulse Check")
 
-    # Remove key parameters to avoid state collision issues
     pst1 = st.radio(
         row["Post_Q1"],
         [row["Post_Opt1"], row["Post_Opt2"], row["Post_Opt3"]],
-        index=None,
+        index=None, key="pst1",
     )
     pst2 = st.radio(
         row["Post_Q2"],
         [row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]],
-        index=None,
+        index=None, key="pst2",
     )
 
     st.divider()
@@ -313,7 +243,7 @@ def _submit_results(row: pd.Series, pst1: str, pst2: str) -> None:
     lift = s_post - s_pre
 
     record = {
-        "Timestamp": str(ny_now()),
+        "Timestamp": ny_now(),
         "Class": st.session_state.class_code,
         "Student": st.session_state.student_id,
         "Topic": st.session_state.active_topic,
@@ -325,22 +255,17 @@ def _submit_results(row: pd.Series, pst1: str, pst2: str) -> None:
         "Status": status,
     }
 
-    csv_ok = True
     try:
-        append_result_csv(record)
+        append_result(record)
     except Exception as e:
-        st.error(f"Failed to save to CSV: {e}")
-        csv_ok = False
+        st.error(f"Failed to save results: {e}")
+        return
 
-    # Sheets write is best-effort — failure never blocks the user
-    _append_to_gsheet(record)
-
-    if csv_ok:
-        if status == "Completed":
-            st.balloons()
-            render_mastery_badge(st.session_state.student_id, lift)
-        else:
-            st.warning("Mastery logged! Try watching the full video next time to earn a badge.")
+    if status == "Completed":
+        st.balloons()
+        render_mastery_badge(st.session_state.student_id, lift)
+    else:
+        st.warning("Mastery logged! Try watching the full video next time to earn a badge.")
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +315,7 @@ def main() -> None:
         render_admin()
         return
 
+    # Learning Portal
     if df_cms is None:
         st.error("Could not load content. Check your CMS connection in secrets.")
         return
