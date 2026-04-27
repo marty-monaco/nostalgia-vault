@@ -8,8 +8,8 @@ import streamlit as st
 # CONSTANTS
 # ---------------------------------------------------------------------------
 DATA_FILE = "vault_data.csv"
-ADMIN_PASSWORD = "vault2026"
-NY_UTC_OFFSET = timedelta(hours=4)
+ADMIN_PASSWORD = os.getenv("VAULT_ADMIN_PASSWORD", "vault2026")  # Use env var in production
+NY_UTC_OFFSET = timedelta(hours=-4)  # UTC-4 (EDT) — subtract -4 means add 4 hours
 VIDEO_COMPLETION_THRESHOLD = 0.9
 DEFAULT_VIDEO_LENGTH_SEC = 85
 FALLBACK_VIDEO = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -33,7 +33,7 @@ DATA_COLUMNS = [
 
 def ny_now() -> datetime:
     """Return current time adjusted to US/Eastern (UTC-4 approximation)."""
-    return datetime.utcnow() - NY_UTC_OFFSET
+    return datetime.utcnow() + NY_UTC_OFFSET
 
 
 def score_answers(response1: str, response2: str, correct1: str, correct2: str) -> int:
@@ -46,7 +46,9 @@ def engagement_status(elapsed_sec: float, video_length_sec: float) -> str:
 
 def append_result_csv(record: dict) -> None:
     """Append a single result row to the local CSV, creating headers if needed."""
-    pd.DataFrame([record]).to_csv(
+    # Ensure all required columns are present in the record
+    full_record = {col: record.get(col, "") for col in DATA_COLUMNS}
+    pd.DataFrame([full_record]).to_csv(
         DATA_FILE,
         mode="a",
         header=not os.path.exists(DATA_FILE),
@@ -157,6 +159,20 @@ def load_cms_data() -> pd.DataFrame | None:
         if df.empty:
             st.warning("CMS loaded but contains no topics.")
             return None
+        
+        # Validate required columns exist
+        required_cols = [
+            "Topic", "Pre_Q1", "Pre_Q2", "Pre_Opt1", "Pre_Opt2", "Pre_Opt3",
+            "Pre_Opt1_Q2", "Pre_Opt2_Q2", "Pre_Opt3_Q2", "Pre_A1", "Pre_A2",
+            "Post_Q1", "Post_Q2", "Post_Opt1", "Post_Opt2", "Post_Opt3",
+            "Post_Opt1_Q2", "Post_Opt2_Q2", "Post_Opt3_Q2", "Post_A1", "Post_A2",
+            "Video_URL", "Video_Length_Sec"
+        ]
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            st.error(f"CMS is missing required columns: {', '.join(missing)}")
+            return None
+        
         return df
     except KeyError:
         st.error("Missing `connections.gsheets.spreadsheet` in secrets.")
@@ -197,8 +213,11 @@ def render_nps_selector() -> None:
     st.write("### ⚡ Rate this Vault Story")
     cols = st.columns(len(NPS_OPTIONS))
     for col, (emoji, label, score) in zip(cols, NPS_OPTIONS):
-        if col.button(f"{emoji}\n{label}", use_container_width=True):
-            st.session_state.nps_score = score
+        with col:
+            # Use unique key to avoid state collisions
+            if st.button(f"{emoji}\n{label}", use_container_width=True, key=f"nps_{score}"):
+                st.session_state.nps_score = score
+                st.rerun()
 
     if st.session_state.nps_score is not None:
         st.success(f"Selected Rating: {st.session_state.nps_score}/10")
@@ -211,15 +230,16 @@ def render_nps_selector() -> None:
 def render_pre_test(row: pd.Series) -> None:
     st.title(f"🔍 Pre-Assessment: {st.session_state.active_topic}")
 
+    # Remove key parameters to avoid state collision issues
     p1 = st.radio(
         row["Pre_Q1"],
         [row["Pre_Opt1"], row["Pre_Opt2"], row["Pre_Opt3"]],
-        index=None, key="p1",
+        index=None,
     )
     p2 = st.radio(
         row["Pre_Q2"],
         [row["Pre_Opt1_Q2"], row["Pre_Opt2_Q2"], row["Pre_Opt3_Q2"]],
-        index=None, key="p2",
+        index=None,
     )
 
     st.divider()
@@ -259,15 +279,16 @@ def render_vault_content(row: pd.Series) -> None:
     st.divider()
     st.write("### 🧠 Pulse Check")
 
+    # Remove key parameters to avoid state collision issues
     pst1 = st.radio(
         row["Post_Q1"],
         [row["Post_Opt1"], row["Post_Opt2"], row["Post_Opt3"]],
-        index=None, key="pst1",
+        index=None,
     )
     pst2 = st.radio(
         row["Post_Q2"],
         [row["Post_Opt1_Q2"], row["Post_Opt2_Q2"], row["Post_Opt3_Q2"]],
-        index=None, key="pst2",
+        index=None,
     )
 
     st.divider()
