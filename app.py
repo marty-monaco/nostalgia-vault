@@ -1,36 +1,98 @@
 import streamlit as st
-from st_gsheets_connection import GSheetsConnection
+from streamlit_gsheets import GSheetsConnection
 
-# Page Config
-st.set_page_config(page_title="The Vault", page_icon="🔒")
+# ---------------------------------------------------------------------------
+# CONFIG
+# ---------------------------------------------------------------------------
+st.set_page_config(page_title="The Vault", page_icon="🔒", layout="wide")
 
-# Sidebar for Demoing
-access_mode = st.sidebar.radio("Navigate to:", ["Student View", "Admin CMS"])
+# ---------------------------------------------------------------------------
+# CONNECTION
+# ---------------------------------------------------------------------------
+@st.cache_resource
+def get_connection():
+    """Return a cached GSheetsConnection.
+    Requires in Streamlit secrets:
+        [connections.gsheets]
+        spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_ID/edit"
+        type = "url"
+    """
+    try:
+        return st.connection("gsheets", type=GSheetsConnection)
+    except Exception as e:
+        return None
 
-# Simple Connection
-conn = st.connection("gsheets", type=GSheetsConnection)
+conn = get_connection()
 
-if access_mode == "Student View":
-    st.title("🔓 The Vault")
-    st.markdown("### Unlock a concept through metaphor.")
-    
-    concept = st.text_input("What would you like to learn today?")
-    
-    if concept:
-        st.info(f"The Orchestrator is analyzing: **{concept}**")
-        # In a simple pilot, we can show the power by just 
-        # reflecting their data back in a structured way.
-        st.write("---")
-        st.write(f"Imagine {concept} as a series of interconnected rooms in a **Vault**...")
+if conn is None:
+    st.error("⚠️ Google Sheets connection failed. Check your Streamlit Secrets.")
+    st.stop()
 
-elif access_mode == "Admin CMS":
-    st.title("🛠️ Orchestrator Admin")
-    pwd = st.sidebar.text_input("Password", type="password")
-    
-    if pwd == st.secrets["admin_password"]:
-        st.write("### Captured Learning Data")
-        # This reads the public sheet without needing JSON keys
-        df = conn.read(ttl="0") # ttl="0" ensures it doesn't cache, so you see fresh data
-        st.dataframe(df)
+# ---------------------------------------------------------------------------
+# NAVIGATION
+# ---------------------------------------------------------------------------
+st.sidebar.title("🔒 The Vault")
+access_mode = st.sidebar.radio("View Mode:", ["Student Portal", "Orchestrator Admin"])
+
+# ---------------------------------------------------------------------------
+# STUDENT PORTAL
+# ---------------------------------------------------------------------------
+if access_mode == "Student Portal":
+    st.title("The Vault")
+    st.markdown("### *Universal Metaphor-Based Learning*")
+    st.header("🔓 Welcome to The Vault")
+
+    concept = st.text_input(
+        "Enter a concept to unlock:",
+        placeholder="e.g. Blockchain",
+        max_chars=100,
+    )
+
+    if concept.strip():
+        st.divider()
+        st.subheader(f"Mapping: {concept.strip()}")
+
+        with st.spinner("The Orchestrator is generating your metaphor..."):
+            try:
+                df = conn.read(ttl=60)
+                # Look for a row matching the entered concept (case-insensitive)
+                match = df[df.iloc[:, 0].str.lower() == concept.strip().lower()]
+                if not match.empty:
+                    st.success("Metaphor found!")
+                    st.dataframe(match, use_container_width=True)
+                else:
+                    st.info("No metaphor found for this concept yet. Check back soon!")
+            except Exception as e:
+                st.error(f"Could not load metaphor data: {e}")
     else:
-        st.warning("Enter password to view captured data.")
+        st.info("Enter a concept above to get started.")
+
+# ---------------------------------------------------------------------------
+# ADMIN DASHBOARD
+# ---------------------------------------------------------------------------
+elif access_mode == "Orchestrator Admin":
+    st.title("🛠️ Admin CMS")
+
+    admin_pw = st.text_input("Admin Password", type="password")
+    if not admin_pw:
+        st.stop()
+    if admin_pw != st.secrets.get("admin_password", "vault2026"):
+        st.error("Incorrect password.")
+        st.stop()
+
+    st.success("Access granted.")
+
+    try:
+        df = conn.read(ttl=0)  # ttl=0 forces a fresh read each time
+        if df.empty:
+            st.info("The Google Sheet is empty.")
+        else:
+            st.metric("Total Rows", len(df))
+            st.dataframe(df, use_container_width=True)
+            st.download_button(
+                "Export as CSV",
+                df.to_csv(index=False),
+                file_name="vault_data.csv",
+            )
+    except Exception as e:
+        st.error(f"Could not load sheet data: {e}")
