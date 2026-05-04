@@ -1,98 +1,82 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+from utils.ingestor import UniversalIngestor
+import os
 
-# ---------------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------------
-st.set_page_config(page_title="The Vault", page_icon="🔒", layout="wide")
+# --- 1. PAGE CONFIG ---
+st.set_page_config(page_title="Curriculum Ingest | The Vault", page_icon="📥", layout="wide")
 
-# ---------------------------------------------------------------------------
-# CONNECTION
-# ---------------------------------------------------------------------------
-@st.cache_resource
-def get_connection():
-    """Return a cached GSheetsConnection.
-    Requires in Streamlit secrets:
-        [connections.gsheets]
-        spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_ID/edit"
-        type = "url"
-    """
-    try:
-        return st.connection("gsheets", type=GSheetsConnection)
-    except Exception as e:
-        return None
+st.markdown("""
+    <style>
+    .ingest-container { background-color: #1f2937; padding: 20px; border-radius: 15px; border: 1px solid #4b4b4b; }
+    h1 { color: #FFD700; }
+    </style>
+""", unsafe_allow_html=True)
 
-conn = get_connection()
+# --- 2. HEADER ---
+st.title("📥 CURRICULUM INGEST")
+st.write("Step 1: Transform raw curriculum into a normalized knowledge base.")
 
-if conn is None:
-    st.error("⚠️ Google Sheets connection failed. Check your Streamlit Secrets.")
-    st.stop()
+# --- 3. INPUT SELECTION ---
+st.divider()
+col_left, col_right = st.columns([1, 2])
 
-# ---------------------------------------------------------------------------
-# NAVIGATION
-# ---------------------------------------------------------------------------
-st.sidebar.title("🔒 The Vault")
-access_mode = st.sidebar.radio("View Mode:", ["Student Portal", "Orchestrator Admin"])
-
-# ---------------------------------------------------------------------------
-# STUDENT PORTAL
-# ---------------------------------------------------------------------------
-if access_mode == "Student Portal":
-    st.title("The Vault")
-    st.markdown("### *Universal Metaphor-Based Learning*")
-    st.header("🔓 Welcome to The Vault")
-
-    concept = st.text_input(
-        "Enter a concept to unlock:",
-        placeholder="e.g. Blockchain",
-        max_chars=100,
+with col_left:
+    st.write("### 🏗️ Source Type")
+    source_type = st.radio(
+        "What are we vaultifying today?",
+        ["URL (Web Content)", "PDF Document", "Word (.docx)"],
+        index=0
     )
 
-    if concept.strip():
-        st.divider()
-        st.subheader(f"Mapping: {concept.strip()}")
-
-        with st.spinner("The Orchestrator is generating your metaphor..."):
-            try:
-                df = conn.read(ttl=60)
-                # Look for a row matching the entered concept (case-insensitive)
-                match = df[df.iloc[:, 0].str.lower() == concept.strip().lower()]
-                if not match.empty:
-                    st.success("Metaphor found!")
-                    st.dataframe(match, use_container_width=True)
-                else:
-                    st.info("No metaphor found for this concept yet. Check back soon!")
-            except Exception as e:
-                st.error(f"Could not load metaphor data: {e}")
+with col_right:
+    st.write("### 📂 Input Material")
+    if source_type == "URL (Web Content)":
+        source_input = st.text_input("Paste URL here:", placeholder="https://en.wikipedia.org/wiki/RICO_Act")
+        file_upload = None
     else:
-        st.info("Enter a concept above to get started.")
+        file_upload = st.file_uploader(f"Choose a {source_type} file", type=["pdf", "docx"])
+        source_input = "file_upload"
 
-# ---------------------------------------------------------------------------
-# ADMIN DASHBOARD
-# ---------------------------------------------------------------------------
-elif access_mode == "Orchestrator Admin":
-    st.title("🛠️ Admin CMS")
+# --- 4. PROCESSING LOGIC ---
+st.divider()
 
-    admin_pw = st.text_input("Admin Password", type="password")
-    if not admin_pw:
-        st.stop()
-    if admin_pw != st.secrets.get("admin_password", "vault2026"):
-        st.error("Incorrect password.")
-        st.stop()
+if st.button("PROCESS & NORMALIZE CONTENT ⚡", use_container_width=True):
+    if (source_type == "URL (Web Content)" and not source_input) or (source_type != "URL (Web Content)" and not file_upload):
+        st.error("Please provide a valid source before processing.")
+    else:
+        with st.spinner("Extracting, cleaning, and normalizing text..."):
+            # Initialize our custom utility
+            # If it's a URL, we pass the URL string; if it's a file, we pass the filename
+            path_or_url = source_input if source_type == "URL (Web Content)" else file_upload.name
+            ingestor = UniversalIngestor(path_or_url)
+            
+            # Execute Ingestion
+            # Note: file_upload is passed for buffer reading in PDFs/Docx
+            payload = ingestor.get_ingest_payload(file_upload)
+            
+            if "Error" in payload["raw_text"]:
+                st.error(payload["raw_text"])
+            else:
+                # Store in Session State for the Orchestrator Page (Step 2)
+                st.session_state["raw_curriculum"] = payload["raw_text"]
+                st.session_state["ingest_metadata"] = payload["metadata"]
+                
+                # UI Feedback
+                st.success(f"Successfully ingested {len(payload['raw_text'])} characters!")
+                
+                # Show Stats
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Format", payload["metadata"]["type"])
+                c2.metric("Approx. Vault Stories", max(1, len(payload["raw_text"]) // 2500))
+                c3.metric("Data Status", "Ready for AI")
 
-    st.success("Access granted.")
+                # Content Preview
+                with st.expander("👀 Review Normalized Text"):
+                    st.markdown("---")
+                    st.write(payload["raw_text"])
+                    st.markdown("---")
 
-    try:
-        df = conn.read(ttl=0)  # ttl=0 forces a fresh read each time
-        if df.empty:
-            st.info("The Google Sheet is empty.")
-        else:
-            st.metric("Total Rows", len(df))
-            st.dataframe(df, use_container_width=True)
-            st.download_button(
-                "Export as CSV",
-                df.to_csv(index=False),
-                file_name="vault_data.csv",
-            )
-    except Exception as e:
-        st.error(f"Could not load sheet data: {e}")
+# --- 5. FOOTER NAVIGATION ---
+if "raw_curriculum" in st.session_state:
+    st.divider()
+    st.info("💡 **Next Step:** Navigate to the **🧠 Orchestrate** page in the sidebar to generate your Director JSON and Script.")
