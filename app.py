@@ -1,82 +1,85 @@
 import streamlit as st
 from utils.ingestor import UniversalIngestor
-import os
 
-# --- 1. PAGE CONFIG ---
-st.set_page_config(page_title="Curriculum Ingest | The Vault", page_icon="📥", layout="wide")
+st.set_page_config(page_title="The Vault - Ingest Deck", page_icon="📥", layout="wide")
 
-st.markdown("""
-    <style>
-    .ingest-container { background-color: #1f2937; padding: 20px; border-radius: 15px; border: 1px solid #4b4b4b; }
-    h1 { color: #FFD700; }
-    </style>
-""", unsafe_allow_html=True)
+st.title("📥 THE VAULT CONTROL DECK")
+st.subheader("Unified Curriculum Ingestion & Data Normalization Hub")
+st.write("Select your input vector below to parse, normalize, and cache your foundational educational materials.")
 
-# --- 2. HEADER ---
-st.title("📥 CURRICULUM INGEST")
-st.write("Step 1: Transform raw curriculum into a normalized knowledge base.")
-
-# --- 3. INPUT SELECTION ---
 st.divider()
-col_left, col_right = st.columns([1, 2])
 
-with col_left:
-    st.write("### 🏗️ Source Type")
-    source_type = st.radio(
-        "What are we vaultifying today?",
-        ["URL (Web Content)", "PDF Document", "Word (.docx)"],
-        index=0
+# Create 3 distinct horizontal tabs for clean user interaction
+tab_file, tab_url, tab_text = st.tabs(["📂 Upload Documents", "🌐 Web Link / URL", "✍️ Paste Raw Text"])
+
+source_payload = None
+file_object = None
+
+# TAB 1: File Uploader Logic
+with tab_file:
+    st.write("### Import Local Assets")
+    uploaded_file = st.file_uploader(
+        "Drag and drop your curriculum files here:", 
+        type=["pdf", "docx"],
+        help="Supports Adobe PDF (.pdf) and Microsoft Word (.docx) formats."
     )
+    if uploaded_file:
+        file_object = uploaded_file
+        source_payload = uploaded_file.name
+        st.info(f"📎 File selected: {uploaded_file.name}")
 
-with col_right:
-    st.write("### 📂 Input Material")
-    if source_type == "URL (Web Content)":
-        source_input = st.text_input("Paste URL here:", placeholder="https://en.wikipedia.org/wiki/RICO_Act")
-        file_upload = None
-    else:
-        file_upload = st.file_uploader(f"Choose a {source_type} file", type=["pdf", "docx"])
-        source_input = "file_upload"
+# TAB 2: URL Logic
+with tab_url:
+    st.write("### Import Web Assets")
+    url_input = st.text_input(
+        "Paste article or curriculum URL link here:",
+        placeholder="e.g., https://en.wikipedia.org/wiki/Compound_interest"
+    )
+    if url_input.strip():
+        source_payload = url_input.strip()
 
-# --- 4. PROCESSING LOGIC ---
+# TAB 3: Raw Text Logic
+with tab_text:
+    st.write("### Direct Text Ingestion")
+    text_input = st.text_area(
+        "Paste textbook raw chapters or notes below:",
+        placeholder="Type or paste high-density educational literature here...",
+        height=250
+    )
+    if text_input.strip():
+        source_payload = text_input.strip()
+
+st.write("") # Quick vertical spacing layout element
+st.write("")
+
+# Single consolidated process button wrapped in a safe form layout
+process_button = st.button("📥 Process and Normalize Selection", type="primary", use_container_width=True)
+
 st.divider()
 
-if st.button("PROCESS & NORMALIZE CONTENT ⚡", use_container_width=True):
-    if (source_type == "URL (Web Content)" and not source_input) or (source_type != "URL (Web Content)" and not file_upload):
-        st.error("Please provide a valid source before processing.")
+if process_button:
+    if not source_payload:
+        st.error("❌ Action Required: Please provide an asset input (upload a file, insert a valid URL, or paste text) before attempting normalization.")
     else:
-        with st.spinner("Extracting, cleaning, and normalizing text..."):
-            # Initialize our custom utility
-            # If it's a URL, we pass the URL string; if it's a file, we pass the filename
-            path_or_url = source_input if source_type == "URL (Web Content)" else file_upload.name
-            ingestor = UniversalIngestor(path_or_url)
-            
-            # Execute Ingestion
-            # Note: file_upload is passed for buffer reading in PDFs/Docx
-            payload = ingestor.get_ingest_payload(file_upload)
-            
-            if "Error" in payload["raw_text"]:
-                st.error(payload["raw_text"])
-            else:
-                # Store in Session State for the Orchestrator Page (Step 2)
-                st.session_state["raw_curriculum"] = payload["raw_text"]
-                st.session_state["ingest_metadata"] = payload["metadata"]
+        with st.spinner("⚡ Initializing normalization pipeline... Parsing text structures..."):
+            try:
+                # Instantiate the ingestor class using the active input stream
+                ingestor = UniversalIngestor(source_payload)
+                payload = ingestor.get_ingest_payload(file_object=file_object)
                 
-                # UI Feedback
-                st.success(f"Successfully ingested {len(payload['raw_text'])} characters!")
-                
-                # Show Stats
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Format", payload["metadata"]["type"])
-                c2.metric("Approx. Vault Stories", max(1, len(payload["raw_text"]) // 2500))
-                c3.metric("Data Status", "Ready for AI")
-
-                # Content Preview
-                with st.expander("👀 Review Normalized Text"):
-                    st.markdown("---")
-                    st.write(payload["raw_text"])
-                    st.markdown("---")
-
-# --- 5. FOOTER NAVIGATION ---
-if "raw_curriculum" in st.session_state:
-    st.divider()
-    st.info("💡 **Next Step:** Navigate to the **🧠 Orchestrate** page in the sidebar to generate your Director JSON and Script.")
+                # Check for backend errors
+                if "Error" in payload["raw_text"]:
+                    st.error(payload["raw_text"])
+                else:
+                    # Global cross-page state assignment
+                    st.session_state["raw_curriculum"] = payload["raw_text"]
+                    st.session_state["ingest_metadata"] = payload["metadata"]
+                    
+                    st.success(f"🎉 Success! Extracted and normalized {len(payload['raw_text'])} characters into The Vault memory cache.")
+                    
+                    # Display a beautiful read-only preview block of what the AI stored
+                    with st.expander("📋 Review Ingested Core Text Payload", expanded=True):
+                        st.text_area("Normalized Content Wrapper:", value=payload["raw_text"], height=300, disabled=True)
+                        
+            except Exception as e:
+                st.error(f"Critical Ingestion Failure: {e}")
