@@ -13,29 +13,29 @@ class ProductionEngine:
 
     def generate_blueprint(self, creative_report):
         system_instruction = (
-            "You are an expert Instructional Designer and Hollywood Scriptwriter. "
-            "Your job is to take a creative metaphorical blueprint and flesh it out into a "
-            "production-ready, 90-second educational video script and evaluation package."
+            "You are an expert Instructional Designer and Media Producer. Your job is to take a "
+            "narrative metaphor concept and build it out into a 90-second video script and assessment package."
         )
 
         prompt = f"""
-        Using the following Creative Director Metaphor Blueprint:
+        Using the following Selected Story Blueprint:
         ---
         {creative_report}
         ---
 
-        Please generate a complete, production-ready payload with the following two sections:
+        Please generate a complete production payload broken into these two specific sections:
 
-        ### SECTION 1: DUAL-COLUMN VIDEO SCRIPT (90 Seconds)
-        Format this as a markdown table with two distinct columns: 
-        * **Visual Cue / On-Screen Action**: Detailed instructions for what the viewer sees (perfect for feeding into an AI video generator like Runway or Sora).
-        * **Audio / Voiceover**: The exact text to be spoken by the narrator or characters (perfect for feeding into a voice cloner like ElevenLabs).
-        Make sure the progression cleanly maps the chosen metaphor to the underlying financial mechanics step-by-step.
+        ### SECTION 1: 90-SECOND RUNNING VIDEO SCRIPT
+        Write out the script chronologically as a series of scenes (Scene 1, Scene 2, Scene 3, etc.). For each scene, provide:
+        * **[VISUAL]**: Clear, vivid instructions for the on-screen action, animations, or scenery (perfect for an AI video generator).
+        * **[AUDIO]**: The exact voiceover text to be spoken by the narrator (clear, high-school-appropriate language perfect for voice cloning).
+
+        Ensure the story progression tracks perfectly to the underlying financial rules from the source text.
 
         ### SECTION 2: CALIBRATED ASSESSMENT PACKAGE
-        Provide exactly 4 multiple-choice questions (with answers and brief explanations):
-        * **2 Pre-Video Baseline Questions**: Testing the raw financial concept directly using clear, high-school-appropriate terminology (to establish a baseline).
-        * **2 Post-Video Conceptual Questions**: Testing the student's mastery *through the lens of the metaphor* or its application, proving they understand the core operational mechanism.
+        Provide exactly 4 multiple-choice questions (with options A, B, C, D, the correct answer, and a 1-sentence explanation):
+        * **2 Pre-Video Baseline Questions**: Testing the raw financial concept directly using clear, textbook terminology.
+        * **2 Post-Video Conceptual Questions**: Testing mastery *through the lens of the story or metaphor* to prove they understand the operational mechanism.
         """
 
         try:
@@ -44,7 +44,7 @@ class ProductionEngine:
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.3,
+                    temperature=0.4, # Balanced for formatting stability
                 )
             )
             return response.text
