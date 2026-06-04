@@ -1,85 +1,166 @@
+"""
+utils/production.py
+
+ProductionEngine: wraps the Gemini API to generate a 90-second video script
+and calibrated assessment package from a narrative metaphor blueprint.
+"""
+import os
+import time
+import logging
 import streamlit as st
-from utils.ingestor import UniversalIngestor
+from google import genai
+from google.genai import types
 
-st.set_page_config(page_title="The Vault - Ingest Deck", page_icon="📥", layout="wide")
+logger = logging.getLogger(__name__)
 
-st.title("📥 THE VAULT CONTROL DECK")
-st.subheader("Unified Curriculum Ingestion & Data Normalization Hub")
-st.write("Select your input vector below to parse, normalize, and cache your foundational educational materials.")
+# ---------------------------------------------------------------------------
+# CONSTANTS — tunable without touching method logic
+# ---------------------------------------------------------------------------
+DEFAULT_MODEL       = "gemini-2.5-flash"
+DEFAULT_TEMPERATURE = 0.4   # Balanced for formatting stability
+MAX_RETRIES         = 3
+RETRY_DELAY_SEC     = 2.0
 
-st.divider()
+SYSTEM_INSTRUCTION = (
+    "You are an expert Instructional Designer and Media Producer. "
+    "Your job is to take a narrative metaphor concept and build it out into "
+    "a 90-second video script and assessment package."
+)
 
-# Create 3 distinct horizontal tabs for clean user interaction
-tab_file, tab_url, tab_text = st.tabs(["📂 Upload Documents", "🌐 Web Link / URL", "✍️ Paste Raw Text"])
+BLUEPRINT_PROMPT_TEMPLATE = """\\
+Using the following Selected Story Blueprint:
+---
+{creative_report}
+---
 
-source_payload = None
-file_object = None
+Please generate a complete production payload broken into these two specific sections:
 
-# TAB 1: File Uploader Logic
-with tab_file:
-    st.write("### Import Local Assets")
-    uploaded_file = st.file_uploader(
-        "Drag and drop your curriculum files here:", 
-        type=["pdf", "docx"],
-        help="Supports Adobe PDF (.pdf) and Microsoft Word (.docx) formats."
-    )
-    if uploaded_file:
-        file_object = uploaded_file
-        source_payload = uploaded_file.name
-        st.info(f"📎 File selected: {uploaded_file.name}")
+### SECTION 1: 90-SECOND RUNNING VIDEO SCRIPT
+Write out the script chronologically as a series of scenes (Scene 1, Scene 2, Scene 3, etc.).
+For each scene, provide:
+* **[VISUAL]**: Clear, vivid instructions for the on-screen action, animations, or scenery \\
+(perfect for an AI video generator).
+* **[AUDIO]**: The exact voiceover text to be spoken by the narrator \\
+(clear, high-school-appropriate language perfect for voice cloning).
 
-# TAB 2: URL Logic
-with tab_url:
-    st.write("### Import Web Assets")
-    url_input = st.text_input(
-        "Paste article or curriculum URL link here:",
-        placeholder="e.g., https://en.wikipedia.org/wiki/Compound_interest"
-    )
-    if url_input.strip():
-        source_payload = url_input.strip()
+Ensure the story progression tracks perfectly to the underlying financial rules from the source text.
 
-# TAB 3: Raw Text Logic
-with tab_text:
-    st.write("### Direct Text Ingestion")
-    text_input = st.text_area(
-        "Paste textbook raw chapters or notes below:",
-        placeholder="Type or paste high-density educational literature here...",
-        height=250
-    )
-    if text_input.strip():
-        source_payload = text_input.strip()
+### SECTION 2: CALIBRATED ASSESSMENT PACKAGE
+Provide exactly 4 multiple-choice questions \\
+(with options A, B, C, D, the correct answer, and a 1-sentence explanation):
+* **2 Pre-Video Baseline Questions**: Testing the raw financial concept directly \\
+using clear, textbook terminology.
+* **2 Post-Video Conceptual Questions**: Testing mastery *through the lens of the story \\
+or metaphor* to prove they understand the operational mechanism.
+"""
 
-st.write("") # Quick vertical spacing layout element
-st.write("")
 
-# Single consolidated process button wrapped in a safe form layout
-process_button = st.button("📥 Process and Normalize Selection", type="primary", use_container_width=True)
+# ---------------------------------------------------------------------------
+# API KEY RESOLUTION — single source of truth for the whole app
+# ---------------------------------------------------------------------------
+def resolve_api_key() -> str:
+    """Return the Gemini API key from the first available source.
+    Priority: Streamlit secrets → environment variable → empty string.
+    """
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+        
+    return os.environ.get("GEMINI_API_KEY", "")
 
-st.divider()
 
-if process_button:
-    if not source_payload:
-        st.error("❌ Action Required: Please provide an asset input (upload a file, insert a valid URL, or paste text) before attempting normalization.")
-    else:
-        with st.spinner("⚡ Initializing normalization pipeline... Parsing text structures..."):
+# ---------------------------------------------------------------------------
+# ENGINE
+# ---------------------------------------------------------------------------
+class ProductionEngine:
+    """Generates a video script and assessment package via the Gemini API.
+
+    Args:
+        api_key:     Gemini API key. Raises ValueError immediately if absent.
+        model:       Gemini model name. Defaults to DEFAULT_MODEL.
+        temperature: Sampling temperature. Defaults to DEFAULT_TEMPERATURE.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> None:
+        if not api_key:
+            raise ValueError(
+                "Gemini API key is required. Pass it explicitly or set "
+                "GEMINI_API_KEY in Streamlit secrets or the environment."
+            )
+        self.model       = model
+        self.temperature = temperature
+        self._client     = genai.Client(api_key=api_key)
+
+    # -----------------------------------------------------------------------
+    # PUBLIC
+    # -----------------------------------------------------------------------
+    def generate_blueprint(self, creative_report: str) -> str:
+        """Return a production payload (script + quiz) for the given report.
+
+        Raises:
+            ValueError:    Empty or whitespace-only creative_report.
+            RuntimeError:  API call failed after MAX_RETRIES attempts.
+        """
+        if not creative_report or not creative_report.strip():
+            raise ValueError("creative_report must not be empty.")
+
+        prompt = self._build_prompt(creative_report)
+        return self._call_api_with_retry(prompt)
+
+    # -----------------------------------------------------------------------
+    # PRIVATE
+    # -----------------------------------------------------------------------
+    def _build_prompt(self, creative_report: str) -> str:
+        """Render the prompt template — testable without an API call."""
+        return BLUEPRINT_PROMPT_TEMPLATE.format(creative_report=creative_report.strip())
+
+    def _call_api_with_retry(self, prompt: str) -> str:
+        """Call the Gemini API with exponential backoff on transient failures.
+
+        Raises RuntimeError after MAX_RETRIES exhausted.
+        Raises immediately on non-retryable errors (auth, invalid argument).
+        """
+        last_error: Exception | None = None
+
+        for attempt in range(1, MAX_RETRIES + 1):
             try:
-                # Instantiate the ingestor class using the active input stream
-                ingestor = UniversalIngestor(source_payload)
-                payload = ingestor.get_ingest_payload(file_object=file_object)
-                
-                # Check for backend errors
-                if "Error" in payload["raw_text"]:
-                    st.error(payload["raw_text"])
-                else:
-                    # Global cross-page state assignment
-                    st.session_state["raw_curriculum"] = payload["raw_text"]
-                    st.session_state["ingest_metadata"] = payload["metadata"]
-                    
-                    st.success(f"🎉 Success! Extracted and normalized {len(payload['raw_text'])} characters into The Vault memory cache.")
-                    
-                    # Display a beautiful read-only preview block of what the AI stored
-                    with st.expander("📋 Review Ingested Core Text Payload", expanded=True):
-                        st.text_area("Normalized Content Wrapper:", value=payload["raw_text"], height=300, disabled=True)
-                        
+                response = self._client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction if 'system_instruction' in globals() else SYSTEM_INSTRUCTION,
+                        temperature=self.temperature,
+                    ),
+                )
+                text = response.text
+                if not text or not text.strip():
+                    raise ValueError("Gemini returned an empty response.")
+                return text
+
+            except ValueError:
+                raise  # Non-retryable — bad input or empty response
+
             except Exception as e:
-                st.error(f"Critical Ingestion Failure: {e}")
+                last_error = e
+                error_str = str(e).lower()
+
+                # Non-retryable: auth / permission failures
+                if any(k in error_str for k in ("api key", "permission", "unauthorized", "invalid argument")):
+                    raise RuntimeError(f"Non-retryable API error: {e}") from e
+
+                if attempt < MAX_RETRIES:
+                    wait = RETRY_DELAY_SEC * (2 ** (attempt - 1))  # 2s, 4s, 8s
+                    logger.warning("Gemini API attempt %d/%d failed (%s). Retrying in %.1fs…",
+                                   attempt, MAX_RETRIES, e, wait)
+                    time.sleep(wait)
+
+        raise RuntimeError(
+            f"Gemini API failed after {MAX_RETRIES} attempts. Last error: {last_error}"
+        )
