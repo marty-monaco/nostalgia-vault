@@ -86,4 +86,63 @@ def _execute_ingestion_pipeline(source_payload: str, file_object: any = None) ->
             with st.expander("📋 Review Ingested Core Text Payload", expanded=True):
                 st.text_area("Normalized Content Wrapper:", value=payload["raw_text"], height=300, disabled=True)
                 
-        except Exception as e
+        except Exception as e:
+            st.error(f"Critical Ingestion Failure: {e}")
+
+
+# ---------------------------------------------------------------------------
+# MAIN ENTRY POINT
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    st.title("📥 THE VAULT CONTROL DECK")
+    st.subheader("Unified Curriculum Ingestion & Data Normalization Hub")
+    st.write("Select your input vector below to parse, normalize, and cache your foundational educational materials.")
+
+    st.divider()
+
+    # Verify global credentials silently to confirm deployment readiness
+    if resolve_api_key():
+        st.caption("🟢 Core Engine System Validation: API Credentials Configured Securely.")
+    else:
+        st.caption("🟡 System Warning: No global API key found. Configuration required via Cloud Secrets before orchestration.")
+
+    # Instantiate the clean tab layout
+    tab_file, tab_url, tab_text = st.tabs(["📂 Upload Documents", "🌐 Web Link / URL", "✍️ Paste Raw Text"])
+
+    active_payload = None
+    active_file_obj = None
+
+    with tab_file:
+        file_payload, file_obj = _render_file_tab()
+        if file_payload:
+            active_payload = file_payload
+            active_file_obj = file_obj
+
+    with tab_url:
+        url_payload = _render_url_tab()
+        if url_payload and not active_payload:  # Prioritize the file tab if both are entered
+            active_payload = url_payload
+
+    with tab_text:
+        text_payload = _render_text_tab()
+        if text_payload and not active_payload:  # Fall back systematically
+            active_payload = text_payload
+
+    st.write("")  # Spatial structural buffer
+    st.write("")
+
+    # Unified submission trigger
+    process_clicked = st.button("📥 Process and Normalize Selection", type="primary", use_container_width=True)
+
+    st.divider()
+
+    if process_clicked:
+        if not active_payload:
+            st.error("❌ Action Required: Please provide an asset input (upload a file, insert a valid URL, or paste text) before attempting normalization.")
+        else:
+            _execute_ingestion_pipeline(active_payload, file_object=active_file_obj)
+
+
+if __name__ == "__main__":
+    main()
