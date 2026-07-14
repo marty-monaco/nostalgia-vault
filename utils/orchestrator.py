@@ -1,220 +1,64 @@
 """
-Page 2 — Narrative Orchestrator
-Reads curriculum text from session state, pitches 3 story concepts via
-UniverseOrchestrator, routes selections, and manages secure session email backups.
+utils/orchestrator.py
+
+UniverseOrchestrator: Generates 3 distinct narrative metaphor concepts 
+from raw curriculum strings using the Gemini API.
 """
-import json
-import streamlit as st
-from utils.production import resolve_api_key
+import os
+from google import genai
+from google.genai import types
 
-# ---------------------------------------------------------------------------
-# CONSTANTS — session state keys shared across pages
-# ---------------------------------------------------------------------------
-KEY_RAW_CURRICULUM      = "raw_curriculum"
-KEY_RAW_TEXT            = "raw_text"          # legacy fallback from Page 1
-KEY_STORY_INVENTORY     = "story_inventory"
-KEY_ORCHESTRATOR_REPORT = "orchestrator_report"
-KEY_VAULT_ARCHIVE       = "vault_archive"
+class UniverseOrchestrator:
+    def __init__(self, api_key=None):
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError("API Key Missing! Ensure GEMINI_API_KEY is configured.")
+        
+        self.client = genai.Client(api_key=self.api_key)
+        self.model_name = "gemini-2.5-flash"
 
-# ---------------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------------
-st.set_page_config(page_title="The Vault - Orchestrator", page_icon="🧠", layout="wide")
-
-
-# ---------------------------------------------------------------------------
-# HELPERS
-# ---------------------------------------------------------------------------
-
-def _get_raw_source() -> str | None:
-    """Read curriculum text from session state, checking both key variants."""
-    return (
-        st.session_state.get(KEY_RAW_CURRICULUM)
-        or st.session_state.get(KEY_RAW_TEXT)
-    )
-
-
-def _parse_stories(raw_report: str) -> list[str]:
-    """Parse the orchestrator response into a list of story strings."""
-    raw = raw_report.strip()
-    
-    if raw.startswith("[") or raw.startswith("{"):
-        try:
-            stories = json.loads(raw)
-            if isinstance(stories, list) and all(isinstance(s, str) for s in stories):
-                return [s.strip() for s in stories if s.strip()]
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-    return [s.strip() for s in raw.split("|||") if s.strip()]
-
-
-@st.cache_resource
-def _get_orchestrator(api_key: str) -> UniverseOrchestrator:
-    """Cache the orchestrator instance for the session to avoid re-instantiation."""
-    return UniverseOrchestrator(api_key=api_key)
-
-
-# ---------------------------------------------------------------------------
-# RENDER FUNCTIONS
-# ---------------------------------------------------------------------------
-
-def _render_api_key_section() -> tuple[str, bool]:
-    """Render key input and run button. Returns (api_key, run_clicked)."""
-    auto_key = resolve_api_key() 
-
-    col_input, col_btn = st.columns([2, 1])
-
-    with col_input:
-        if auto_key:
-            st.success("🔒 Gemini API Key automatically loaded from Cloud Secrets.")
-            user_key = auto_key
-        else:
-            user_key = st.text_input(
-                "Enter your Gemini API Key manually:",
-                type="password",
-                help="To skip this step, add GEMINI_API_KEY to your Streamlit Cloud Secrets.",
-            )
-
-    with col_btn:
-        st.write("")
-        st.write("")
-        already_ran = KEY_STORY_INVENTORY in st.session_state
-        label = "🔄 Re-pitch 3 Concepts" if already_ran else "🚀 Pitch 3 Story Concepts"
-        run_clicked = st.button(label, use_container_width=True, type="primary", disabled=not user_key)
-
-    return user_key, run_clicked
-
-
-def _run_orchestrator(api_key: str, raw_source: str) -> None:
-    """Call the orchestrator, parse results, persist to session state."""
-    with st.spinner("🧠 Creative Director brainstorming 3 distinct narrative tracks…"):
-        try:
-            engine = _get_orchestrator(api_key)
-            raw_report = engine.audition_metaphors(raw_source)
-            stories = _parse_stories(raw_report)
-
-            if not stories:
-                st.error("❌ The orchestrator returned no stories. Check your API quota or prompt.")
-                return
-            if len(stories) != 3:
-                st.warning(f"⚠️ Expected 3 stories but received {len(stories)}. Displaying what was returned.")
-
-            st.session_state[KEY_STORY_INVENTORY] = stories
-
-        except ValueError as e:
-            st.error(f"❌ Invalid input: {e}")
-        except RuntimeError as e:
-            st.error(f"❌ Orchestrator failed: {e}")
-        except Exception as e:
-            st.error(f"❌ Unexpected error: {e}")
-
-
-def _render_story_cards(stories: list[str]) -> None:
-    """Render the 3 story pitch cards side by side."""
-    st.markdown("### 🏛️ Active Pitch Deck")
-    st.info("Review the 3 pitched concepts below. Route one to production or archive any for later.")
-
-    cols = st.columns(min(len(stories), 3))
-    for index, story_text in enumerate(stories[:3]):
-        with cols[index]:
-            with st.container(border=True):
-                st.markdown(story_text)
-                st.write("")
-
-                if st.button(f"🎬 Produce Story {index + 1}", key=f"prod_{index}", use_container_width=True, type="primary"):
-                    st.session_state[KEY_ORCHESTRATOR_REPORT] = story_text
-                    st.success(f"🚀 Story {index + 1} sent to Production Engine — switch to the Produce tab.")
-
-                if st.button(f"📁 Archive Story {index + 1}", key=f"arch_{index}", use_container_width=True):
-                    archive = st.session_state[KEY_VAULT_ARCHIVE]
-                    if story_text not in archive:
-                        archive.append(story_text)
-                        st.toast(f"Story {index + 1} saved to Vault Archive! 🎉")
-                    else:
-                        st.toast("Already in archive.")
-
-
-def _render_archive() -> None:
-    """Render the session archive with re-route options."""
-    archive = st.session_state[KEY_VAULT_ARCHIVE]
-    if not archive:
-        return
-
-    st.divider()
-    st.markdown("### 📁 The Vault Story Archive (Current Session)")
-
-    with st.expander(f"View Archived Concepts ({len(archive)} saved)"):
-        for idx, story in enumerate(archive):
-            st.markdown(f"#### Archived Concept #{idx + 1}")
-            st.markdown(story)
-            if st.button(f"Re-Route Concept #{idx + 1} to Production", key=f"re_queue_{idx}"):
-                st.session_state[KEY_ORCHESTRATOR_REPORT] = story
-                st.info(f"Concept #{idx + 1} loaded to active production slot.")
-            st.divider()
-
-
-def _render_sweeper_panel() -> None:
-    """Render the outbound data backup transmission dashboard controller."""
-    archive = st.session_state.get(KEY_VAULT_ARCHIVE, [])
-    if not archive:
-        return
-
-    st.divider()
-    st.markdown("### ⚡ Session Maintenance & Backups")
-    st.write(
-        "Before closing your browser session window, click the engine link below "
-        "to sweep your temporary story cache and deliver a persistent CSV data backup directly to your email."
-    )
-    
-    if st.button("📧 Sweep & Email Vault Archive", type="primary", use_container_width=True):
-        from utils.sweeper import sweep_and_email_vault
-        with st.spinner("Processing compiled logs... Contacting outbound SMTP mail node..."):
-            result_status = sweep_and_email_vault()
-            if result_status == "Success":
-                st.success("🚀 Secure Delivery Confirmed! Check your email inbox for your compiled session CSV attachment.")
-            else:
-                st.error(result_status)
-
-
-# ---------------------------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    st.title("🧠 THE NARRATIVE ORCHESTRATOR")
-    st.subheader("Multi-Story Generation Engine & Concept Hub")
-
-    # Initialise session state variables securely
-    st.session_state.setdefault(KEY_VAULT_ARCHIVE, [])
-    st.session_state.setdefault("active_production_story", None)
-
-    raw_source = _get_raw_source()
-    if not raw_source:
-        st.warning(
-            "⚠️ No content found. Please visit the main landing page "
-            "and process some material first."
+    def audition_metaphors(self, raw_curriculum: str) -> str:
+        """Pitches 3 highly engaging story frameworks for high school seniors."""
+        system_instruction = (
+            "You are an elite Creative Director, Narrative Designer, and Instructional Expert. "
+            "Your superpower is transforming complex, dry curriculum mechanics into high-engagement "
+            "stories and metaphors that perfectly capture the imagination of high school seniors."
         )
-        return
 
-    st.success("✅ Educational data detected in Session State.")
-    st.divider()
+        prompt = f"""
+        Analyze the following educational material:
+        ---
+        {raw_curriculum}
+        ---
 
-    user_key, run_clicked = _render_api_key_section()
-    st.divider()
+        Based on this material, pitch exactly THREE (3) completely distinct narrative concepts or metaphorical worlds that can be used to build a 90-second educational story video. 
 
-    if run_clicked:
-        _run_orchestrator(user_key, raw_source)
+        You must format your response using the exact delimiter string '|||' between the stories so the application can split them into cards. Do not include '|||' anywhere else.
 
-    stories = st.session_state.get(KEY_STORY_INVENTORY)
-    if stories:
-        _render_story_cards(stories)
+        Format your entire output exactly like this:
 
-    _render_archive()
-    
-    # Render the new backup utility terminal element at the footer base line
-    _render_sweeper_panel()
+        ### TITLE: [Story 1 Title]
+        **The Hook / Premise**: [A cinematic, high-school-appropriate story setup]
+        **The Core Analogy**: [Explain exactly how the technical mechanics from the text map directly to the rules/actions of this story world]
+        **The Lift Index**: [Why this specific story drives conceptual mastery for a teenager]
+        |||
+        ### TITLE: [Story 2 Title]
+        **The Hook / Premise**: [A completely different genre or scenario, e.g., sci-fi, history, retro pop-culture]
+        **The Core Analogy**: [How the technical mechanics map to this second world]
+        **The Lift Index**: [Pedagogical value]
+        |||
+        ### TITLE: [Story 3 Title]
+        **The Hook / Premise**: [A third completely distinct narrative direction]
+        **The Core Analogy**: [How the technical mechanics map to this third world]
+        **The Lift Index**: [Pedagogical value]
+        """
 
-
-if __name__ == "__main__":
-    main()
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.7,
+            )
+        )
+        return response.text
