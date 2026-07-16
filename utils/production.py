@@ -1,12 +1,13 @@
 """
 utils/production.py
 
-ProductionEngine: wraps the Gemini API to generate a 90-second video script
-and calibrated assessment package from a narrative metaphor blueprint.
+ProductionEngine: wraps the Gemini API to generate an attention-gated video script
+(with a strict 8-second hook) and calibrated assessment package from a blueprint.
 """
 import os
 import time
 import logging
+import streamlit as st
 from google import genai
 from google.genai import types
 
@@ -21,12 +22,12 @@ MAX_RETRIES         = 3
 RETRY_DELAY_SEC     = 2.0
 
 SYSTEM_INSTRUCTION = (
-    "You are an expert Instructional Designer and Media Producer. "
-    "Your job is to take a narrative metaphor concept and build it out into "
-    "a 90-second video script and assessment package."
+    "You are an expert Instructional Designer, Cognitive Neuroscientist, and Media Producer. "
+    "Your job is to take a narrative metaphor concept and build it out into an attention-gated "
+    "90-second video script and a calibrated assessment package."
 )
 
-BLUEPRINT_PROMPT_TEMPLATE = """\
+BLUEPRINT_PROMPT_TEMPLATE = """\\
 Using the following Selected Story Blueprint:
 ---
 {creative_report}
@@ -35,40 +36,37 @@ Using the following Selected Story Blueprint:
 Please generate a complete production payload broken into these two specific sections:
 
 ### SECTION 1: 90-SECOND RUNNING VIDEO SCRIPT
-Write out the script chronologically as a series of scenes (Scene 1, Scene 2, Scene 3, etc.).
-For each scene, provide:
-* **[VISUAL]**: Clear, vivid instructions for the on-screen action, animations, or scenery \
-(perfect for an AI video generator).
-* **[AUDIO]**: The exact voiceover text to be spoken by the narrator \
-(clear, high-school-appropriate language perfect for voice cloning).
+Write out the script chronologically as a series of scenes. You must strictly follow this temporal attention-gating structure:
 
-Ensure the story progression tracks perfectly to the underlying financial rules from the source text.
+* **PHASE 1: THE 8-SECOND ATTENTION HOOK (0:00 - 0:08)**
+  * **[VISUAL]**: A highly disruptive, cinematic, or visually shocking scene designed to capture a teenager's attention instantly. No talking heads or slow text intros.
+  * **[AUDIO]**: A compelling hook line, psychological paradox, or dramatic question. CRITICAL: Absolutely no textbook definitions, jargon, or technical terms are allowed in these first 8 seconds. Establish curiosity first.
+
+* **PHASE 2: THE METAPHOR MAPPING & EXPOSITION (0:09 - 1:30)**
+  * Break this down into sequential scenes (Scene 2, Scene 3, etc.). For each scene, provide:
+    * **[VISUAL]**: Clear, vivid instructions for the on-screen action, character movements, or background animation changes (perfect for an AI video generator like Kling or Runway).
+    * **[AUDIO]**: The exact voiceover text spoken by the narrator. Resolve the tension from the hook by mapping the rules of the story world directly to the underlying financial/technical concepts. Keep the language highly engaging and tuned for clear voice cloning.
 
 ### SECTION 2: CALIBRATED ASSESSMENT PACKAGE
-Provide exactly 4 multiple-choice questions \
-(with options A, B, C, D, the correct answer, and a 1-sentence explanation):
-* **2 Pre-Video Baseline Questions**: Testing the raw financial concept directly \
-using clear, textbook terminology.
-* **2 Post-Video Conceptual Questions**: Testing mastery *through the lens of the story \
-or metaphor* to prove they understand the operational mechanism.
+Provide exactly 4 multiple-choice questions (with options A, B, C, D, the correct answer, and a 1-sentence explanation):
+* **2 Pre-Video Baseline Questions**: Testing the raw technical/financial concept directly using clear, textbook terminology.
+* **2 Post-Video Conceptual Questions**: Testing true conceptual mastery *through the lens of the story or metaphor* to prove they understand how the mechanism operates.
 """
 
 
 # ---------------------------------------------------------------------------
-# API KEY RESOLUTION — single source of truth for the whole app
+# API KEY RESOLUTION
 # ---------------------------------------------------------------------------
-def resolve_api_key(streamlit_secrets=None) -> str:
+def resolve_api_key() -> str:
     """Return the Gemini API key from the first available source.
-
     Priority: Streamlit secrets → environment variable → empty string.
-    Pass `st.secrets` as `streamlit_secrets` when calling from a Streamlit page.
-    Keeping this here (rather than in each page) means one change covers the app.
     """
-    if streamlit_secrets is not None:
-        try:
-            return streamlit_secrets["GEMINI_API_KEY"]
-        except (KeyError, Exception):
-            pass
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+        
     return os.environ.get("GEMINI_API_KEY", "")
 
 
@@ -76,14 +74,6 @@ def resolve_api_key(streamlit_secrets=None) -> str:
 # ENGINE
 # ---------------------------------------------------------------------------
 class ProductionEngine:
-    """Generates a video script and assessment package via the Gemini API.
-
-    Args:
-        api_key:     Gemini API key. Raises ValueError immediately if absent.
-        model:       Gemini model name. Defaults to DEFAULT_MODEL.
-        temperature: Sampling temperature. Defaults to DEFAULT_TEMPERATURE.
-    """
-
     def __init__(
         self,
         api_key: str,
@@ -99,35 +89,17 @@ class ProductionEngine:
         self.temperature = temperature
         self._client     = genai.Client(api_key=api_key)
 
-    # -----------------------------------------------------------------------
-    # PUBLIC
-    # -----------------------------------------------------------------------
     def generate_blueprint(self, creative_report: str) -> str:
-        """Return a production payload (script + quiz) for the given report.
-
-        Raises:
-            ValueError:    Empty or whitespace-only creative_report.
-            RuntimeError:  API call failed after MAX_RETRIES attempts.
-        """
         if not creative_report or not creative_report.strip():
             raise ValueError("creative_report must not be empty.")
 
         prompt = self._build_prompt(creative_report)
         return self._call_api_with_retry(prompt)
 
-    # -----------------------------------------------------------------------
-    # PRIVATE
-    # -----------------------------------------------------------------------
     def _build_prompt(self, creative_report: str) -> str:
-        """Render the prompt template — testable without an API call."""
         return BLUEPRINT_PROMPT_TEMPLATE.format(creative_report=creative_report.strip())
 
     def _call_api_with_retry(self, prompt: str) -> str:
-        """Call the Gemini API with exponential backoff on transient failures.
-
-        Raises RuntimeError after MAX_RETRIES exhausted.
-        Raises immediately on non-retryable errors (auth, invalid argument).
-        """
         last_error: Exception | None = None
 
         for attempt in range(1, MAX_RETRIES + 1):
@@ -146,18 +118,17 @@ class ProductionEngine:
                 return text
 
             except ValueError:
-                raise  # Non-retryable — bad input or empty response
+                raise
 
             except Exception as e:
                 last_error = e
                 error_str = str(e).lower()
 
-                # Non-retryable: auth / permission failures
                 if any(k in error_str for k in ("api key", "permission", "unauthorized", "invalid argument")):
                     raise RuntimeError(f"Non-retryable API error: {e}") from e
 
                 if attempt < MAX_RETRIES:
-                    wait = RETRY_DELAY_SEC * (2 ** (attempt - 1))  # 2s, 4s, 8s
+                    wait = RETRY_DELAY_SEC * (2 ** (attempt - 1))
                     logger.warning("Gemini API attempt %d/%d failed (%s). Retrying in %.1fs…",
                                    attempt, MAX_RETRIES, e, wait)
                     time.sleep(wait)
