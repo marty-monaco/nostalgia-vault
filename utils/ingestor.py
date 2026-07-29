@@ -1,145 +1,93 @@
 """
-utils/ingestor.py
+utils/ingestion.py
 
-UniversalIngestor: extracts clean text from a URL, raw text paste,
-uploaded PDF, or uploaded DOCX file.
+CurriculumIngestor: Cleans, normalizes, and aggregates raw curriculum input 
+from text strings or multiple webpage URLs into a unified session payload.
 """
-import urllib.parse
+import re
+import logging
+from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
-import PyPDF2
-from docx import Document
 
-# ---------------------------------------------------------------------------
-# CONSTANTS
-# ---------------------------------------------------------------------------
-REQUEST_TIMEOUT_SEC = 10
-REQUEST_HEADERS     = {"User-Agent": "Mozilla/5.0"}
+logger = logging.getLogger(__name__)
 
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+}
 
-class IngestorError(Exception):
-    """Raised when ingestion fails in a way the caller should handle."""
+class CurriculumIngestor:
+    def __init__(self, timeout: int = 10) -> None:
+        self.timeout = timeout
 
+    def normalize_text(self, raw_text: str) -> str:
+        """Cleans and standardizes raw text input."""
+        if not raw_text or not raw_text.strip():
+            raise ValueError("Input text is empty.")
+        
+        # Remove extra whitespace and standardized linebreaks
+        cleaned = re.sub(r"\r\n|\r", "\n", raw_text)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
 
-class UniversalIngestor:
-    """Extract plain text from a URL, raw paste, PDF, or DOCX file object.
+    def fetch_url_content(self, url: str) -> str:
+        """Scrapes core text content from a single web page (optimized for OpenStax)."""
+        url = url.strip()
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError(f"Invalid URL provided: '{url}'")
 
-    Usage:
-        ingestor = UniversalIngestor(source_input)
-        payload  = ingestor.get_ingest_payload(file_object=uploaded_file)
-
-    Returns a dict:
-        {
-            "raw_text":  str,   # clean, whitespace-normalised text
-            "metadata":  {
-                "source_type": "url" | "raw_text" | "pdf" | "docx",
-                "length":      int,
-                "url":         str  # only present for URL sources
-            }
-        }
-
-    Raises:
-        IngestorError: on any failure — callers should catch this and show
-                       a user-facing error rather than receiving error strings
-                       disguised as valid content.
-    """
-
-    def __init__(self, source_input: str) -> None:
-        self.source_input = source_input.strip()
-        self._content  = ""
-        self._metadata: dict = {"source_type": "unknown", "length": 0}
-
-    # -----------------------------------------------------------------------
-    # PUBLIC
-    # -----------------------------------------------------------------------
-
-    def get_ingest_payload(self, file_object=None) -> dict:
-        """Detect source type, extract text, and return a clean payload."""
-        if file_object is not None:
-            self._ingest_file(file_object)
-        elif self._is_valid_url(self.source_input):
-            self._ingest_url(self.source_input)
-        else:
-            self._ingest_raw_text(self.source_input)
-
-        self._content  = self._normalise_whitespace(self._content)
-        self._metadata["length"] = len(self._content)
-
-        if not self._content:
-            raise IngestorError("Ingestion produced empty content. Check the source and try again.")
-
-        return {"raw_text": self._content, "metadata": self._metadata}
-
-    # -----------------------------------------------------------------------
-    # PRIVATE — source handlers
-    # -----------------------------------------------------------------------
-
-    def _ingest_file(self, file_object) -> None:
-        """Dispatch to the correct file handler based on file name extension."""
-        name = getattr(file_object, "name", "").lower()
-        if name.endswith(".pdf"):
-            self._ingest_pdf(file_object)
-        elif name.endswith(".docx"):
-            self._ingest_docx(file_object)
-        else:
-            raise IngestorError(
-                f"Unsupported file type: '{name}'. Please upload a PDF or DOCX file."
-            )
-
-    def _ingest_pdf(self, file_object) -> None:
         try:
-            reader = PyPDF2.PdfReader(file_object)
-            pages  = [page.extract_text() or "" for page in reader.pages]
-            self._content = "\n".join(pages)
-            self._metadata["source_type"] = "pdf"
-        except Exception as e:
-            raise IngestorError(f"Failed to read PDF: {e}") from e
-
-    def _ingest_docx(self, file_object) -> None:
-        try:
-            doc = Document(file_object)
-            self._content = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-            self._metadata["source_type"] = "docx"
-        except Exception as e:
-            raise IngestorError(f"Failed to read DOCX: {e}") from e
-
-    def _ingest_url(self, url: str) -> None:
-        try:
-            response = requests.get(url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SEC)
+            response = requests.get(url, headers=HEADERS, timeout=self.timeout)
             response.raise_for_status()
-            response.encoding = response.apparent_encoding  # handle non-UTF-8 pages
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to fetch content from URL '{url}': {e}") from e
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            for tag in soup(["script", "style", "nav", "footer", "header"]):
-                tag.extract()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-            self._content = soup.get_text(separator=" ")
-            self._metadata["source_type"] = "url"
-            self._metadata["url"] = url
+        # Remove irrelevant tags
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
+            tag.decompose()
 
-        except requests.exceptions.Timeout:
-            raise IngestorError(f"Request timed out after {REQUEST_TIMEOUT_SEC}s: {url}")
-        except requests.exceptions.HTTPError as e:
-            raise IngestorError(f"HTTP error scraping URL: {e}")
-        except Exception as e:
-            raise IngestorError(f"Failed to scrape URL: {e}") from e
+        # Prioritize main content containers (OpenStax specific selectors included)
+        main_content = (
+            soup.find("main") or 
+            soup.find("article") or 
+            soup.find("div", {"data-type": "page"}) or 
+            soup.find("div", class_="main-content") or 
+            soup.body
+        )
 
-    def _ingest_raw_text(self, text: str) -> None:
-        self._content = text
-        self._metadata["source_type"] = "raw_text"
+        if not main_content:
+            raise RuntimeError(f"Could not extract readable main text from URL '{url}'.")
 
-    # -----------------------------------------------------------------------
-    # PRIVATE — utilities
-    # -----------------------------------------------------------------------
+        text = main_content.get_text(separator="\n", strip=True)
+        return self.normalize_text(text)
 
-    @staticmethod
-    def _is_valid_url(value: str) -> bool:
-        try:
-            result = urllib.parse.urlparse(value)
-            return result.scheme in ("http", "https") and bool(result.netloc)
-        except ValueError:
-            return False
+    def fetch_batch_urls(self, url_list: list[str]) -> str:
+        """Scrapes multiple URLs and stitches them into a single aggregated payload."""
+        valid_urls = [u.strip() for u in url_list if u.strip()]
+        if not valid_urls:
+            raise ValueError("No valid URLs provided for batch ingestion.")
 
-    @staticmethod
-    def _normalise_whitespace(text: str) -> str:
-        return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+        aggregated_payload = []
+        errors = []
+
+        for idx, url in enumerate(valid_urls, start=1):
+            try:
+                content = self.fetch_url_content(url)
+                aggregated_payload.append(f"=== CHAPTER SECTION {idx}: {url} ===")
+                aggregated_payload.append(content)
+                aggregated_payload.append("\n" + "="*50 + "\n")
+            except Exception as e:
+                logger.error("Error fetching URL %s: %s", url, e)
+                errors.append(f"URL {idx} ({url}): {e}")
+
+        if not aggregated_payload:
+            raise RuntimeError(f"Batch processing failed for all URLs. Errors:\n" + "\n".join(errors))
+
+        return "\n\n".join(aggregated_payload)
