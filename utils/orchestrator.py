@@ -2,7 +2,7 @@
 utils/orchestrator.py
 
 UniverseOrchestrator: Generates 3 distinct narrative metaphor concepts 
-from raw curriculum strings using the Gemini API, enforcing strict domain diversity.
+from raw curriculum strings using the Gemini API, with optional user-selected domain steering.
 """
 import os
 from google import genai
@@ -17,22 +17,31 @@ class UniverseOrchestrator:
         self.client = genai.Client(api_key=self.api_key)
         self.model_name = "gemini-2.5-flash"
 
-    def audition_metaphors(self, raw_curriculum: str) -> str:
-        """Pitches 3 distinct narrative concepts across diverse real-world domains."""
+    def audition_metaphors(self, raw_curriculum: str, preferred_domain: str = "Any / Multi-Domain (Default)") -> str:
+        """Pitches 3 distinct narrative concepts, prioritizing a preferred domain if selected."""
+        
+        domain_directive = ""
+        if preferred_domain != "Any / Multi-Domain (Default)":
+            domain_directive = (
+                f"\n\nPRIMARY USER REQUIREMENT: At least ONE (1) of your pitched story concepts MUST be explicitly "
+                f"built using the '{preferred_domain}' framework (e.g., NBA/NFL/MLB collective bargaining, roster scarcity, or union dynamics if sports is chosen)."
+            )
+
         system_instruction = (
             "You are an elite Creative Director, Narrative Designer, and Instructional Expert. "
             "Your superpower is transforming complex, high-density curriculum mechanics into "
-            "associative schema-mapping metaphors that anchor dry facts to intuitive real-world systems.\n\n"
+            "associative schema-mapping metaphors that anchor dry facts to intuitive real-world systems."
+            f"{domain_directive}\n\n"
             "STRICT DOMAIN DIVERSITY RULE: You MUST draw your 3 story concepts from THREE (3) COMPLETELY "
             "DIFFERENT domain categories below. Never repeat a genre (e.g., do not pair two sci-fi, "
             "fantasy, or gaming tropes together). Choose from:\n"
-            "1. Real-World Logistics & Transport (Airports, Traffic Systems, Shipping, Supply Chains)\n"
-            "2. Culinary & Restaurant Dynamics (Kitchen Operations, Recipe Chemistry, Service Trade-offs)\n"
-            "3. Natural Systems & Ecology (Forest Mycelium Networks, River Dynamics, Ecosystem Balances)\n"
-            "4. Architecture & Construction (Load Balancing, Blueprinting, Foundations vs. Facades)\n"
-            "5. History & High-Stakes Diplomacy (Trade Routes, Negotiation Paradoxes, Expeditions)\n"
-            "6. Performing Arts & Music (Orchestral Conducting, Stage Management, Film Production)\n"
-            "7. Sports, Athletics & Physical Tactics (Formula 1 Pit Stops, Endurance Relay, Tactical Plays)"
+            "1. Sports, Athletics & Professional Leagues (NBA / NFL / MLB Collective Bargaining, Tactical Plays, Pit Stops)\n"
+            "2. Real-World Logistics & Transport (Airports, Traffic Systems, Shipping, Supply Chains)\n"
+            "3. Culinary & Restaurant Dynamics (Kitchen Operations, Recipe Chemistry, Service Trade-offs)\n"
+            "4. Natural Systems & Ecology (Forest Mycelium Networks, River Dynamics, Ecosystem Balances)\n"
+            "5. Architecture & Construction (Load Balancing, Blueprinting, Foundations vs. Facades)\n"
+            "6. History & High-Stakes Diplomacy (Trade Routes, Negotiation Paradoxes, Expeditions)\n"
+            "7. Performing Arts & Music (Orchestral Conducting, Stage Management, Film Production)"
         )
 
         prompt = f"""
