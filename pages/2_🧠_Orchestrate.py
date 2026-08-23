@@ -13,13 +13,22 @@ from utils.constants import (
 
 DOMAIN_OPTIONS = [
     "Any / Multi-Domain (Default)",
-    "Sports, Athletics & Professional Leagues (NBA / NFL / MLB)",
-    "Real-World Logistics & Transport (Airports, Shipping, Supply Chains)",
-    "Culinary & Restaurant Dynamics (Kitchen Ops, Recipe Trade-offs)",
-    "Performing Arts & Music (Orchestral Conducting, Stage Mgmt)",
-    "Architecture & Construction (Load Balancing, City Planning)",
-    "History & High-Stakes Diplomacy (Trade Routes, Treaty Games)",
-    "Natural Systems & Ecology (Forest Networks, River Dynamics)",
+    # --- Gen Z Native ---
+    "Gaming & Esports (In-Game Economies, Skill Trees, Battle Pass, Esports Teams)",
+    "Pop Culture & Celebrity Economy (Chart Wars, Streaming Royalties, Fan Armies, Brand Deals)",
+    "Social Media & Creator Economy (Algorithm Dynamics, Monetization, Platform Wars)",
+    "Sneaker & Streetwear Culture (Limited Drops, Resale Markets, Hype Cycles, Collabs)",
+    "Film, TV & Streaming Industry (Box Office Risk, Franchise Economics, Netflix vs. Studios)",
+    "Fashion & Trend Economics (Fast Fashion vs. Luxury, Trend Diffusion, Influencer Markets)",
+    "Space Exploration & Sci-Fi (Mission Economics, Colony Trade-offs, Interplanetary Markets)",
+    # --- Classic ---
+    "Sports, Athletics & Pro Leagues (Salary Caps, Draft Picks, Moneyball Analytics)",
+    "Food, Restaurant & Kitchen Dynamics (Kitchen Ops, Franchise vs. Independent, Recipe Trade-offs)",
+    "History & High-Stakes Cinematic Moments (Gold Rushes, Heists, Trade Routes, Revolutions)",
+    "Natural Systems & Ecology (Forest Networks, Predator/Prey, Ecosystem Balance)",
+    "Real-World Logistics & Transport (Airports, Shipping Lanes, Last-Mile Delivery)",
+    "Urban Planning & City Economics (Gentrification, Housing Markets, Infrastructure)",
+    "Performing Arts & Live Events (Tour Economics, Ticket Scalping, Festival Logistics)",
 ]
 
 st.set_page_config(page_title="The Vault - Orchestrate", page_icon="🧠", layout="wide")
