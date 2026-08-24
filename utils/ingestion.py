@@ -1,11 +1,16 @@
 """
-Page 1 — Curriculum Ingestor
-Supports smart auto-crawl (Methods 1 & 2), manual batch URL ingestion,
-and raw text normalization into Session State.
+utils/ingestion.py
+
+CurriculumIngestor: Cleans, normalizes, and aggregates raw curriculum input
+from text strings or multiple webpage URLs into a unified session payload.
+...
 """
-import streamlit as st
-from utils.ingestion import CurriculumIngestor, IngestionError  # ← this line is missing
-from utils.constants import KEY_CURRICULUM_PAYLOAD
+import re
+import logging
+from urllib.parse import urlparse, urljoin, urldefrag
+from collections import OrderedDict
+import requests
+from bs4 import BeautifulSoup
 
 MIN_PAYLOAD_CHARS = 500
 
