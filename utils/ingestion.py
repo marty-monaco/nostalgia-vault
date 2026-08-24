@@ -1,170 +1,169 @@
 """
-utils/ingestion.py
-
-CurriculumIngestor: Cleans, normalizes, and aggregates raw curriculum input
-from text strings or multiple webpage URLs into a unified session payload.
+Page 1 — Curriculum Ingestor
+Supports smart auto-crawl (Methods 1 & 2), manual batch URL ingestion,
+and raw text normalization into Session State.
 """
-import re
-import logging
-from urllib.parse import urlparse
-import requests
-from bs4 import BeautifulSoup
+import streamlit as st
+from utils.ingestion import CurriculumIngestor, IngestionError
+from utils.constants import KEY_CURRICULUM_PAYLOAD
 
-logger = logging.getLogger(__name__)
+MIN_PAYLOAD_CHARS = 500
 
-# ---------------------------------------------------------------------------
-# CONSTANTS
-# ---------------------------------------------------------------------------
-REQUEST_TIMEOUT_SEC  = 10
-MIN_CONTENT_LENGTH   = 100   # chars — below this a scrape is considered empty
-SECTION_SEPARATOR    = "\n" + "=" * 60 + "\n"
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    )
-}
+st.set_page_config(page_title="The Vault - Ingest", page_icon="📥", layout="wide")
 
 
-class IngestionError(Exception):
-    """Raised when ingestion fails in a way the caller should handle visibly."""
+def _render_payload_preview(payload: str) -> None:
+    st.divider()
+    st.markdown("### 📄 Active Curriculum Payload in Memory")
 
+    col1, col2 = st.columns(2)
+    col1.metric("Characters", f"{len(payload):,}")
+    col2.metric("Words (approx)", f"{len(payload.split()):,}")
 
-class CurriculumIngestor:
-    """Scrapes, cleans, and aggregates curriculum content from URLs or raw text.
-
-    Args:
-        timeout: HTTP request timeout in seconds. Defaults to REQUEST_TIMEOUT_SEC.
-    """
-
-    def __init__(self, timeout: int = REQUEST_TIMEOUT_SEC) -> None:
-        self.timeout = timeout
-
-    # -----------------------------------------------------------------------
-    # PUBLIC
-    # -----------------------------------------------------------------------
-
-    def normalize_text(self, raw_text: str) -> str:
-        """Clean and standardize raw text input.
-
-        Raises:
-            IngestionError: if input is empty or produces no content after cleaning.
-        """
-        if not raw_text or not raw_text.strip():
-            raise IngestionError("Input text is empty.")
-
-        # Normalize line endings
-        cleaned = re.sub(r"\r\n|\r", "\n", raw_text)
-        # Collapse 3+ blank lines to 2
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        # Collapse runs of spaces/tabs within a line to a single space
-        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-
-        result = cleaned.strip()
-        if len(result) < MIN_CONTENT_LENGTH:
-            raise IngestionError(
-                f"Normalized text is too short ({len(result)} chars). "
-                "Please provide more substantial curriculum content."
-            )
-        return result
-
-    def fetch_url_content(self, url: str) -> str:
-        """Scrape core text from a single web page (optimized for OpenStax).
-
-        Raises:
-            IngestionError: on invalid URL, HTTP error, or empty content.
-        """
-        url = url.strip()
-        parsed = urlparse(url)
-        if not parsed.scheme or not parsed.netloc:
-            raise IngestionError(f"Invalid URL: '{url}'")
-        if parsed.scheme not in ("http", "https"):
-            raise IngestionError(f"Only http/https URLs are supported. Got: '{url}'")
-
-        try:
-            response = requests.get(url, headers=HEADERS, timeout=self.timeout)
-            response.raise_for_status()
-            response.encoding = response.apparent_encoding  # handle non-UTF-8 pages
-        except requests.exceptions.Timeout:
-            raise IngestionError(f"Request timed out after {self.timeout}s: '{url}'")
-        except requests.exceptions.HTTPError as e:
-            raise IngestionError(f"HTTP {e.response.status_code} error fetching '{url}': {e}")
-        except requests.RequestException as e:
-            raise IngestionError(f"Network error fetching '{url}': {e}") from e
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
-            tag.decompose()
-
-        # Prioritize main content containers — OpenStax-specific selectors included
-        main_content = (
-            soup.find("main")
-            or soup.find("article")
-            or soup.find("div", {"data-type": "page"})
-            or soup.find("div", class_="main-content")
-            or soup.body
+    if len(payload) < MIN_PAYLOAD_CHARS:
+        st.warning(
+            f"⚠️ Payload is very short ({len(payload):,} chars). "
+            "Metaphor generation may produce weak results — consider adding more content."
         )
 
-        if not main_content:
-            raise IngestionError(f"Could not locate main content container in '{url}'.")
+    with st.expander("Preview Normalized Payload (click to expand)", expanded=False):
+        st.text_area("Cached Payload:", payload, height=250, disabled=True)
+        st.markdown(
+            "👉 **Next Step:** Head to the **🧠 Narrative Orchestrator** to audition story concepts."
+        )
 
-        raw = main_content.get_text(separator="\n", strip=True)
-        content = self.normalize_text(raw)
 
-        if len(content) < MIN_CONTENT_LENGTH:
-            raise IngestionError(
-                f"Page scraped but returned almost no text ({len(content)} chars). "
-                f"The page may require JavaScript rendering: '{url}'"
-            )
-        return content
+def main() -> None:
+    st.title("📥 CURRICULUM INGESTOR")
+    st.subheader("Aggregate & Normalize Multi-Page Textbook Chapters")
 
-    def fetch_batch_urls(self, url_list: list[str]) -> str:
-        """Scrape multiple URLs and stitch them into one aggregated payload.
+    ingestor = CurriculumIngestor()
 
-        Partial failures are logged and included in the output as error notices
-        so the caller knows which URLs failed without aborting the whole batch.
+    tab_smart, tab_batch, tab_text = st.tabs([
+        "🤖 Smart Crawl (Auto-Discover)",
+        "🌐 Manual Batch URLs",
+        "📝 Raw Text Input",
+    ])
 
-        Raises:
-            IngestionError: if ALL URLs fail (nothing useful was retrieved).
+    # -----------------------------------------------------------------------
+    # TAB 1: SMART CRAWL
+    # -----------------------------------------------------------------------
+    with tab_smart:
+        st.markdown("### Smart Chapter Crawler")
+        st.caption(
+            "Paste a single URL from anywhere in a chapter. The crawler will "
+            "auto-discover all related sections and fetch them in order. "
+            "Optimized for OpenStax — also works on most paginated textbook sites."
+        )
 
-        Returns:
-            Aggregated payload string with section headers and any error notices.
-        """
-        valid_urls = [u.strip() for u in url_list if u.strip()]
-        if not valid_urls:
-            raise IngestionError("No valid URLs provided for batch ingestion.")
+        st.info(
+            "**How it works:**\n"
+            "- **OpenStax URLs:** Uses the chapter number in the URL to find all "
+            "sibling sections, then follows Next Section links to catch anything missed.\n"
+            "- **Other sites:** Follows Next / Next Page links sequentially until "
+            "the chapter ends or a boundary is detected.\n"
+            f"- Maximum **{ingestor.max_pages} pages** per crawl to prevent runaway fetching."
+        )
 
-        sections: list[str] = []
-        errors:   list[str] = []
+        seed_url = st.text_input(
+            "Paste any URL from the chapter:",
+            placeholder="https://openstax.org/books/principles-microeconomics-3e/pages/18-1-voter-participation-and-costs-of-elections",
+        )
 
-        for idx, url in enumerate(valid_urls, start=1):
-            try:
-                content = self.fetch_url_content(url)
-                sections.append(f"=== CHAPTER SECTION {idx}: {url} ===")
-                sections.append(content)
-                sections.append(SECTION_SEPARATOR)
-                logger.info("Section %d/%d fetched successfully: %s", idx, len(valid_urls), url)
-            except IngestionError as e:
-                logger.error("Section %d/%d failed (%s): %s", idx, len(valid_urls), url, e)
-                errors.append(f"⚠️ Section {idx} failed ({url}): {e}")
+        if st.button("🤖 Auto-Discover & Fetch Chapter", type="primary", key="btn_smart"):
+            if not seed_url.strip():
+                st.warning("⚠️ Please enter a URL.")
+            else:
+                with st.spinner("Scanning for related chapter sections…"):
+                    try:
+                        payload, discovered_urls = ingestor.smart_crawl(seed_url.strip())
+                        st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
 
-        if not sections:
-            raise IngestionError(
-                f"Batch ingestion failed for all {len(valid_urls)} URL(s):\n"
-                + "\n".join(errors)
-            )
+                        st.success(
+                            f"🎉 Smart crawl complete — {len(discovered_urls)} section(s) fetched!"
+                        )
 
-        # Warn caller about partial failures by prepending them to the payload
-        if errors:
-            error_notice = (
-                "⚠️ PARTIAL BATCH — the following URLs could not be fetched:\n"
-                + "\n".join(errors)
-                + "\n\nSuccessfully retrieved sections are below:\n"
-                + SECTION_SEPARATOR
-            )
-            sections.insert(0, error_notice)
+                        with st.expander(
+                            f"📋 Pages discovered and fetched ({len(discovered_urls)})",
+                            expanded=True,
+                        ):
+                            for i, url in enumerate(discovered_urls, start=1):
+                                st.markdown(f"`{i}.` {url}")
 
-        return "\n\n".join(sections)
+                    except IngestionError as e:
+                        st.error(f"❌ Smart Crawl Error: {e}")
+                    except Exception as e:
+                        st.error(f"❌ Unexpected Error: {e}")
+
+    # -----------------------------------------------------------------------
+    # TAB 2: MANUAL BATCH URLs
+    # -----------------------------------------------------------------------
+    with tab_batch:
+        st.markdown("### Manual Batch URL Ingestion")
+        st.caption(
+            "Enter one URL per line to aggregate specific sub-sections "
+            "into a single master payload. Use this when you want precise "
+            "control over exactly which pages are included."
+        )
+
+        urls_input = st.text_area(
+            "URLs (one per line):",
+            height=150,
+            placeholder=(
+                "https://openstax.org/books/principles-microeconomics-3e/pages/18-1-voter-participation\n"
+                "https://openstax.org/books/principles-microeconomics-3e/pages/18-2-special-interest-politics\n"
+                "https://openstax.org/books/principles-microeconomics-3e/pages/18-3-flaws-in-democratic-system"
+            ),
+        )
+
+        if st.button("🚀 Fetch & Normalize Batch", type="primary", key="btn_batch"):
+            valid_urls = [u.strip() for u in urls_input.splitlines() if u.strip()]
+            if not valid_urls:
+                st.warning("⚠️ Please enter at least one valid URL.")
+            else:
+                with st.spinner(f"Fetching {len(valid_urls)} page(s)…"):
+                    try:
+                        payload = ingestor.fetch_batch_urls(valid_urls)
+                        st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
+                        st.success(f"🎉 {len(valid_urls)} page(s) fetched and aggregated!")
+                    except IngestionError as e:
+                        st.error(f"❌ Ingestion Error: {e}")
+                    except Exception as e:
+                        st.error(f"❌ Unexpected Error: {e}")
+
+    # -----------------------------------------------------------------------
+    # TAB 3: RAW TEXT INPUT
+    # -----------------------------------------------------------------------
+    with tab_text:
+        st.markdown("### Direct Text Ingestion")
+
+        raw_text_input = st.text_area(
+            "Paste Curriculum Text:",
+            height=250,
+            placeholder="Paste syllabus notes, textbook content, or topic outlines here…",
+        )
+
+        if st.button("⚙️ Process & Normalize Text", type="primary", key="btn_raw"):
+            if not raw_text_input.strip():
+                st.warning("⚠️ Please paste text into the box above.")
+            else:
+                with st.spinner("Normalizing curriculum text…"):
+                    try:
+                        payload = ingestor.normalize_text(raw_text_input)
+                        st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
+                        st.success("🎉 Text normalized and cached!")
+                    except IngestionError as e:
+                        st.error(f"❌ Normalization Error: {e}")
+                    except Exception as e:
+                        st.error(f"❌ Unexpected Error: {e}")
+
+    # -----------------------------------------------------------------------
+    # PAYLOAD PREVIEW (all tabs)
+    # -----------------------------------------------------------------------
+    cached = st.session_state.get(KEY_CURRICULUM_PAYLOAD)
+    if cached:
+        _render_payload_preview(cached)
+
+
+if __name__ == "__main__":
+    main()
