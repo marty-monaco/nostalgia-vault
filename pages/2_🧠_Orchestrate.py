@@ -34,26 +34,64 @@ DOMAIN_OPTIONS = [
 st.set_page_config(page_title="The Vault - Orchestrate", page_icon="🧠", layout="wide")
 
 
+def _clean_pitch(raw: str) -> str:
+    """Strip JSON artifacts and normalise whitespace from a pitch string."""
+    import json
+    # If the whole thing is a JSON array, extract first element
+    raw = raw.strip().strip('"').strip("'")
+    # Unescape common JSON escape sequences
+    raw = raw.replace("\\n", "\n").replace("\\t", "\t")
+    raw = raw.replace('\"', '"')
+    return raw.strip()
+
+
 def _render_pitch_cards(pitches: list[str]) -> None:
     st.divider()
     st.markdown("### 🎬 Audition Pitch Cards")
-    cols = st.columns(len(pitches))
-    for idx, (col, pitch_text) in enumerate(zip(cols, pitches)):
-        with col:
-            with st.container(border=True):
-                st.markdown(pitch_text)
-                st.write("")
-                if st.button(
-                    f"👉 Select & Produce Pitch {idx + 1}",
-                    key=f"select_pitch_{idx}",
-                    use_container_width=True,
-                    type="primary",
-                ):
-                    st.session_state[KEY_ORCHESTRATOR_REPORT] = pitch_text
-                    st.success(
-                        f"✅ Pitch {idx + 1} locked as Active Blueprint! "
-                        "Navigate to the 🎬 Produce tab."
-                    )
+    st.caption("Review the 3 story concepts below. Select one to route to the Production Engine.")
+
+    for idx, pitch_text in enumerate(pitches[:3]):
+        pitch_clean = _clean_pitch(pitch_text)
+
+        # Extract title for the expander label
+        title_match = None
+        for line in pitch_clean.splitlines():
+            if line.startswith("### TITLE:"):
+                title_match = line.replace("### TITLE:", "").strip()
+                break
+        card_label = f"Pitch {idx + 1}: {title_match}" if title_match else f"Pitch {idx + 1}"
+
+        with st.expander(f"📖 {card_label}", expanded=True):
+            # Render each field as a clean readable block
+            lines = pitch_clean.splitlines()
+            for line in lines:
+                if line.startswith("### TITLE:"):
+                    st.markdown(f"## {line.replace('### TITLE:', '').strip()}")
+                elif line.startswith("**Domain Category**"):
+                    st.markdown(f"🏷️ {line}")
+                elif line.startswith("**The Hook"):
+                    st.markdown(f"🎣 {line}")
+                elif line.startswith("**The Core Analogy**"):
+                    st.markdown(f"🔗 {line}")
+                elif line.startswith("**The Lift Index**"):
+                    st.markdown(f"📈 {line}")
+                elif line.startswith("- "):
+                    st.markdown(line)
+                elif line.strip():
+                    st.markdown(line)
+
+            st.divider()
+            if st.button(
+                f"🎬 Select & Produce Pitch {idx + 1}",
+                key=f"select_pitch_{idx}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.session_state[KEY_ORCHESTRATOR_REPORT] = pitch_clean
+                st.success(
+                    f"✅ Pitch {idx + 1} — *{title_match}* — locked as Active Blueprint! "
+                    "Navigate to the 🎬 Produce tab."
+                )
 
 
 def main() -> None:
@@ -101,13 +139,18 @@ def main() -> None:
         with st.spinner(f"Pitching story concepts (Domain: {preferred_domain})…"):
             try:
                 orchestrator = UniverseOrchestrator(api_key=api_key)
-                # audition_metaphors returns list[str] in the refactored orchestrator
                 pitches = orchestrator.audition_metaphors(
                     raw_curriculum=raw_curriculum,
                     preferred_domain=preferred_domain,
                 )
+                # Ensure we always store a clean list[str] — never a raw JSON string
+                if isinstance(pitches, str):
+                    import json
+                    try:
+                        pitches = json.loads(pitches)
+                    except Exception:
+                        pitches = [p.strip() for p in pitches.split("|||") if p.strip()]
                 st.session_state[KEY_ORCHESTRATOR_PITCHES] = pitches
-                # Clear any previously selected blueprint to avoid stale state
                 st.session_state.pop(KEY_ORCHESTRATOR_REPORT, None)
                 st.toast("Story Pitches Generated Successfully! 🚀")
             except ValueError as e:
