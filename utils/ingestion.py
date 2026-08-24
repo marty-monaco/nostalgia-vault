@@ -4,6 +4,7 @@ Supports smart auto-crawl (Methods 1 & 2), manual batch URL ingestion,
 and raw text normalization into Session State.
 """
 import streamlit as st
+from utils.ingestion import CurriculumIngestor, IngestionError  # ← this line is missing
 from utils.constants import KEY_CURRICULUM_PAYLOAD
 
 MIN_PAYLOAD_CHARS = 500
