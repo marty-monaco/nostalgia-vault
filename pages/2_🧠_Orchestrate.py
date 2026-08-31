@@ -3,7 +3,7 @@ Page 2 — Narrative Orchestrator
 Pitches 3 distinct story concepts using the Gemini API, with optional domain steering.
 """
 import streamlit as st
-from utils.orchestrator import UniverseOrchestrator
+from utils.orchestrator import UniverseOrchestrator, DIRECT_NARRATIVE_OPTION
 from utils.production import resolve_api_key
 from utils.constants import (
     KEY_CURRICULUM_PAYLOAD,
@@ -13,6 +13,8 @@ from utils.constants import (
 
 DOMAIN_OPTIONS = [
     "Any / Multi-Domain (Default)",
+    # --- Direct Narrative / Non-Metaphor Mode ---
+    DIRECT_NARRATIVE_OPTION,
     # --- Gen Z Native ---
     "Gaming & Esports (In-Game Economies, Skill Trees, Battle Pass, Esports Teams)",
     "Pop Culture & Celebrity Economy (Chart Wars, Streaming Royalties, Fan Armies, Brand Deals)",
@@ -36,10 +38,7 @@ st.set_page_config(page_title="The Vault - Orchestrate", page_icon="🧠", layou
 
 def _clean_pitch(raw: str) -> str:
     """Strip JSON artifacts and normalise whitespace from a pitch string."""
-    import json
-    # If the whole thing is a JSON array, extract first element
     raw = raw.strip().strip('"').strip("'")
-    # Unescape common JSON escape sequences
     raw = raw.replace("\\n", "\n").replace("\\t", "\t")
     raw = raw.replace('\"', '"')
     return raw.strip()
@@ -62,12 +61,11 @@ def _render_pitch_cards(pitches: list[str]) -> None:
         card_label = f"Pitch {idx + 1}: {title_match}" if title_match else f"Pitch {idx + 1}"
 
         with st.expander(f"📖 {card_label}", expanded=True):
-            # Render each field as a clean readable block
             lines = pitch_clean.splitlines()
             for line in lines:
                 if line.startswith("### TITLE:"):
                     st.markdown(f"## {line.replace('### TITLE:', '').strip()}")
-                elif line.startswith("**Domain Category**"):
+                elif line.startswith("**Domain Category**") or line.startswith("**Mode**"):
                     st.markdown(f"🏷️ {line}")
                 elif line.startswith("**The Hook"):
                     st.markdown(f"🎣 {line}")
@@ -75,6 +73,12 @@ def _render_pitch_cards(pitches: list[str]) -> None:
                     st.markdown(f"🔗 {line}")
                 elif line.startswith("**The Lift Index**"):
                     st.markdown(f"📈 {line}")
+                elif line.startswith("**Visual Style / Pacing**") or line.startswith("**Format / Style**"):
+                    st.markdown(f"🎥 {line}")
+                elif line.startswith("**Narrative Arc / Beats**") or line.startswith("**Visual Flow**"):
+                    st.markdown(f"🎞️ {line}")
+                elif line.startswith("**Key Takeaway / Climax**") or line.startswith("**Climax**"):
+                    st.markdown(f"💡 {line}")
                 elif line.startswith("- "):
                     st.markdown(line)
                 elif line.strip():
@@ -96,7 +100,7 @@ def _render_pitch_cards(pitches: list[str]) -> None:
 
 def main() -> None:
     st.title("🧠 NARRATIVE ORCHESTRATOR")
-    st.subheader("Audition 3 Multi-Domain Narrative Concepts")
+    st.subheader("Audition 3 Narrative Concepts")
 
     raw_curriculum = st.session_state.get(KEY_CURRICULUM_PAYLOAD)
     if not raw_curriculum:
@@ -116,7 +120,7 @@ def main() -> None:
         "or leave on Default for full automated diversity:",
         options=DOMAIN_OPTIONS,
         index=0,
-        help="Guarantees that at least one pitched story strictly uses your chosen theme.",
+        help="Choose 'Direct Narrative' to extract literal chronological scenes for YouTube Shorts without analogies, or select a metaphor theme.",
     )
     st.divider()
 
@@ -130,20 +134,27 @@ def main() -> None:
     if existing_pitches:
         st.info("💡 Pitches already generated. Re-running will replace them and clear any active blueprint.")
 
+    is_direct = preferred_domain == DIRECT_NARRATIVE_OPTION
+    btn_label = "🎬 Audition 3 Direct Narrative Concepts" if is_direct else "🎭 Audition 3 Metaphor Concepts"
+    spinner_label = (
+        "Extracting direct chronological story concepts for YouTube Shorts…"
+        if is_direct
+        else f"Pitching story concepts (Domain: {preferred_domain})…"
+    )
+
     if st.button(
-        "🎭 Audition 3 Metaphor Concepts",
+        btn_label,
         type="primary",
         use_container_width=True,
         disabled=not api_key,
     ):
-        with st.spinner(f"Pitching story concepts (Domain: {preferred_domain})…"):
+        with st.spinner(spinner_label):
             try:
                 orchestrator = UniverseOrchestrator(api_key=api_key)
                 pitches = orchestrator.audition_metaphors(
                     raw_curriculum=raw_curriculum,
                     preferred_domain=preferred_domain,
                 )
-                # Ensure we always store a clean list[str] — never a raw JSON string
                 if isinstance(pitches, str):
                     import json
                     try:
