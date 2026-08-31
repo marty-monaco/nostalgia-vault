@@ -82,8 +82,7 @@ Analyze the following educational material:
 Based on this material, pitch exactly THREE (3) completely distinct narrative concepts \
 or metaphorical worlds that can be used to build a 90-second educational story video.
 {domain_directive}
-Return ONLY a valid JSON array containing exactly 3 strings. Each string is one complete \
-story pitch in markdown. No preamble, no explanation, no text outside the JSON array.
+Return a JSON array containing exactly 3 strings. Each string must be one complete story pitch in markdown.
 
 Each story string must follow this structure exactly:
 ### TITLE: [Story Title]
@@ -91,10 +90,6 @@ Each story string must follow this structure exactly:
 **The Hook / Premise**: [A cinematic, highly intuitive real-world story setup]
 **The Core Analogy**: [How the technical mechanics from the text map to this domain]
 **The Lift Index**: [Why this domain metaphor drives conceptual mastery]
-
-Output shape (replace placeholder content):
-["### TITLE: Story One...full markdown...", "### TITLE: Story Two...full markdown...", \
-"### TITLE: Story Three...full markdown..."]
 """
 
 SYSTEM_INSTRUCTION_DIRECT = (
@@ -125,8 +120,7 @@ Pitch 3 distinct directorial pacing styles:
 2. Fast-Paced Action / Chronological Countdown Angle
 3. Deep-Dive Mystery / Forensic Reveal Angle
 
-Return ONLY a valid JSON array containing exactly 3 strings. Each string is one complete \
-treatment pitch in markdown. No preamble, no explanation, no text outside the JSON array.
+Return a JSON array containing exactly 3 strings. Each string must be one complete treatment pitch in markdown.
 
 Each story string must follow this structure exactly:
 ### TITLE: [Shorts Video Title]
@@ -135,10 +129,6 @@ Each story string must follow this structure exactly:
 **The Hook**: [First 3-5 seconds voiceover line and visual opening that stops scrolling]
 **Narrative Arc / Beats**: [Sequential breakdown of 3-4 key chronological scenes directly from the text]
 **Key Takeaway / Climax**: [The literal historical resolution, punchline, or core insight]
-
-Output shape (replace placeholder content):
-["### TITLE: Story One...full markdown...", "### TITLE: Story Two...full markdown...", \
-"### TITLE: Story Three...full markdown..."]
 """
 
 
@@ -153,14 +143,7 @@ def _build_domain_directive(preferred_domain: str) -> str:
 
 
 class UniverseOrchestrator:
-    """Generates 3 narrative pitches from curriculum text via Gemini.
-
-    Args:
-        api_key:      Gemini API key. Use resolve_api_key(st.secrets) from
-                      utils.production before passing here.
-        model:        Gemini model name. Defaults to DEFAULT_MODEL.
-        temperature:  Sampling temperature. Defaults to DEFAULT_TEMPERATURE.
-    """
+    """Generates 3 narrative pitches from curriculum text via Gemini."""
 
     def __init__(
         self,
@@ -177,28 +160,12 @@ class UniverseOrchestrator:
         self.temperature = temperature
         self._client     = genai.Client(api_key=api_key)
 
-    # -----------------------------------------------------------------------
-    # PUBLIC
-    # -----------------------------------------------------------------------
-
     def audition_metaphors(
         self,
         raw_curriculum: str,
         preferred_domain: str = DEFAULT_DOMAIN,
     ) -> list[str]:
-        """Return a list of exactly 3 story pitch strings.
-
-        Args:
-            raw_curriculum:   Normalized curriculum text from CurriculumIngestor.
-            preferred_domain: Optional domain from DOMAIN_OPTIONS in Page 2.
-
-        Returns:
-            list[str] — exactly 3 markdown-formatted story pitch strings.
-
-        Raises:
-            ValueError:    Empty curriculum or wrong number of stories returned.
-            RuntimeError:  API call failed after MAX_RETRIES attempts.
-        """
+        """Return a list of exactly 3 story pitch strings."""
         if not raw_curriculum or not raw_curriculum.strip():
             raise ValueError("raw_curriculum must not be empty.")
 
@@ -206,10 +173,6 @@ class UniverseOrchestrator:
         prompt             = self._build_prompt(raw_curriculum, preferred_domain)
         raw_text           = self._call_api_with_retry(prompt, system_instruction)
         return self._parse_response(raw_text)
-
-    # -----------------------------------------------------------------------
-    # PRIVATE
-    # -----------------------------------------------------------------------
 
     def _build_system_instruction(self, preferred_domain: str) -> str:
         if preferred_domain == DIRECT_NARRATIVE_OPTION:
@@ -233,10 +196,10 @@ class UniverseOrchestrator:
         )
 
     def _parse_response(self, raw_text: str) -> list[str]:
-        """Parse JSON array from LLM response with delimiter fallback."""
+        """Parse JSON array or raw markdown with multi-strategy fallback."""
         text = raw_text.strip()
 
-        # Strip markdown code blocks if the model wrapped the JSON array
+        # Clean code fence wrapper if present
         if text.startswith("```"):
             lines = text.splitlines()
             if lines[0].startswith("```"):
@@ -245,30 +208,56 @@ class UniverseOrchestrator:
                 lines = lines[:-1]
             text = "\n".join(lines).strip()
 
-        # Primary: JSON array
+        # Strategy 1: Standard JSON array parse
         try:
             stories = json.loads(text)
-            if isinstance(stories, list) and all(isinstance(s, str) for s in stories):
-                stories = [s.strip() for s in stories if s.strip()]
-                if len(stories) != 3:
-                    raise ValueError(
-                        f"Expected 3 story pitches, received {len(stories)}. "
-                        "Try re-running — this is usually a transient LLM formatting issue."
-                    )
-                return stories
+            if isinstance(stories, list):
+                # Check if elements are already full story cards
+                card_stories = [s.strip() for s in stories if isinstance(s, str) and "### TITLE:" in s]
+                if len(card_stories) == 3:
+                    return card_stories
+                
+                # If LLM split paragraphs/lines into many items, rejoin and split by TITLE
+                rejoined = "\n\n".join(str(s) for s in stories)
+                grouped = self._split_by_title(rejoined)
+                if len(grouped) == 3:
+                    return grouped
+                if len(card_stories) >= 3:
+                    return card_stories[:3]
         except json.JSONDecodeError:
-            logger.warning("JSON parse failed — falling back to '|||' delimiter split.")
-        except ValueError:
-            raise
+            logger.warning("JSON parse failed — attempting structural string parsing.")
 
-        # Fallback: legacy delimiter
+        # Strategy 2: Split by '### TITLE:' in raw text
+        grouped = self._split_by_title(text)
+        if len(grouped) == 3:
+            return grouped
+        if len(grouped) > 3:
+            return grouped[:3]
+
+        # Strategy 3: Legacy delimiter fallback
         stories = [s.strip() for s in text.split("|||") if s.strip()]
-        if not stories:
-            raise ValueError("Orchestrator returned no parseable story content.")
-        return stories
+        if len(stories) == 3:
+            return stories
+        if len(stories) > 3:
+            return stories[:3]
+
+        raise ValueError(
+            f"Expected 3 story pitches, but received {len(grouped) or len(stories)}. "
+            "Please re-run the audition."
+        )
+
+    def _split_by_title(self, text: str) -> list[str]:
+        """Splits full markdown text into distinct cards starting with ### TITLE:."""
+        parts = text.split("### TITLE:")
+        cards = []
+        for part in parts:
+            clean = part.strip()
+            if clean:
+                cards.append(f"### TITLE: {clean}")
+        return cards
 
     def _call_api_with_retry(self, prompt: str, system_instruction: str) -> str:
-        """Call Gemini with exponential backoff on transient failures."""
+        """Call Gemini with response_mime_type and exponential backoff."""
         last_error: Exception | None = None
 
         for attempt in range(1, MAX_RETRIES + 1):
@@ -279,6 +268,8 @@ class UniverseOrchestrator:
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
                         temperature=self.temperature,
+                        response_mime_type="application/json",
+                        response_schema=list[str],
                     ),
                 )
                 text = response.text
