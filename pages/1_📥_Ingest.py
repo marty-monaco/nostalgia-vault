@@ -1,9 +1,10 @@
 """
 Page 1 — Curriculum Ingestor
 Supports smart auto-crawl (Methods 1 & 2), manual batch URL ingestion,
-and raw text normalization into Session State.
+raw text normalization, and PDF textbook extraction into Session State.
 """
 import streamlit as st
+import pypdf
 from utils.ingestion import CurriculumIngestor, IngestionError
 from utils.constants import KEY_CURRICULUM_PAYLOAD
 
@@ -33,16 +34,36 @@ def _render_payload_preview(payload: str) -> None:
         )
 
 
+def _extract_pdf_text(uploaded_file, start_page: int, end_page: int) -> str:
+    """Extract and combine text from a range of pages in an uploaded PDF."""
+    reader = pypdf.PdfReader(uploaded_file)
+    total_pages = len(reader.pages)
+    
+    # Bound pages within the document range
+    start_idx = max(0, start_page - 1)
+    end_idx = min(total_pages, end_page)
+
+    extracted_parts = []
+    for idx in range(start_idx, end_idx):
+        page = reader.pages[idx]
+        text = page.extract_text()
+        if text and text.strip():
+            extracted_parts.append(f"--- [Page {idx + 1}] ---\n{text.strip()}")
+
+    return "\n\n".join(extracted_parts)
+
+
 def main() -> None:
     st.title("📥 CURRICULUM INGESTOR")
-    st.subheader("Aggregate & Normalize Multi-Page Textbook Chapters")
+    st.subheader("Aggregate & Normalize Multi-Page Textbook Chapters & PDFs")
 
     ingestor = CurriculumIngestor()
 
-    tab_smart, tab_batch, tab_text = st.tabs([
+    tab_smart, tab_batch, tab_text, tab_pdf = st.tabs([
         "🤖 Smart Crawl (Auto-Discover)",
         "🌐 Manual Batch URLs",
         "📝 Raw Text Input",
+        "📑 PDF Textbook Chapter",
     ])
 
     # -----------------------------------------------------------------------
@@ -156,6 +177,56 @@ def main() -> None:
                         st.error(f"❌ Normalization Error: {e}")
                     except Exception as e:
                         st.error(f"❌ Unexpected Error: {e}")
+
+    # -----------------------------------------------------------------------
+    # TAB 4: PDF TEXTBOOK CHAPTER
+    # -----------------------------------------------------------------------
+    with tab_pdf:
+        st.markdown("### PDF Textbook Ingestion")
+        st.caption(
+            "Upload a digital textbook PDF. Select the specific page range of the chapter "
+            "you want to ingest so you only extract the relevant topic material."
+        )
+
+        pdf_file = st.file_uploader("Choose a PDF file", type=["pdf"], key="pdf_uploader")
+
+        if pdf_file is not None:
+            # Inspect page count
+            try:
+                temp_reader = pypdf.PdfReader(pdf_file)
+                total_pages = len(temp_reader.pages)
+                st.info(f"📑 PDF loaded: **{pdf_file.name}** ({total_pages} total pages)")
+
+                col_start, col_end = st.columns(2)
+                with col_start:
+                    start_page = st.number_input(
+                        "Start Page:", min_value=1, max_value=total_pages, value=1, step=1
+                    )
+                with col_end:
+                    end_page = st.number_input(
+                        "End Page:", min_value=1, max_value=total_pages, value=min(20, total_pages), step=1
+                    )
+
+                if st.button("📑 Extract & Normalize PDF Chapter", type="primary", key="btn_pdf"):
+                    if start_page > end_page:
+                        st.error("Start page cannot be greater than end page.")
+                    else:
+                        with st.spinner(f"Extracting pages {start_page} to {end_page}…"):
+                            try:
+                                raw_pdf_text = _extract_pdf_text(pdf_file, int(start_page), int(end_page))
+                                if not raw_pdf_text.strip():
+                                    st.warning("⚠️ No readable text found in those pages (they might be scanned images).")
+                                else:
+                                    payload = ingestor.normalize_text(raw_pdf_text)
+                                    st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
+                                    st.success(f"🎉 Extracted {end_page - start_page + 1} page(s) and normalized!")
+                            except IngestionError as e:
+                                st.error(f"❌ Ingestion Error: {e}")
+                            except Exception as e:
+                                st.error(f"❌ Unexpected Error: {e}")
+
+            except Exception as e:
+                st.error(f"Failed to read PDF file: {e}")
 
     # -----------------------------------------------------------------------
     # PAYLOAD PREVIEW (all tabs)
