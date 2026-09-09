@@ -85,17 +85,18 @@ def _render_pitch_cards(pitches: list[str]) -> None:
                     st.markdown(line)
 
             st.divider()
-            if st.button(
-                f"🎬 Select & Produce Pitch {idx + 1}",
-                key=f"select_pitch_{idx}",
-                use_container_width=True,
-                type="primary",
-            ):
-                st.session_state[KEY_ORCHESTRATOR_REPORT] = pitch_clean
-                st.success(
-                    f"✅ Pitch {idx + 1} — *{title_match}* — locked as Active Blueprint! "
-                    "Navigate to the 🎬 Produce tab."
-                )
+            # When the user clicks "Select Pitch" in 2_Orchestrate.py:
+            if st.button("🎬 Send to Production Engine", key=f"select_pitch_{pitch_idx}"):
+                # 1. Store topic and metaphor under standardized keys
+                st.session_state["selected_metaphor_pitch"] = pitch_text
+                st.session_state["active_topic"] = topic_title
+                
+                # 2. CLEAR STALE PRODUCTION CACHE from previous runs
+                st.session_state.pop("prod_script", None)
+                st.session_state.pop("prod_mcqs", None)
+                st.session_state.pop("raw_production_output", None)
+                
+                st.success("✅ Pitch locked in! Navigate to '3_🎬_Produce' to generate the script.")
 
 
 def main() -> None:
