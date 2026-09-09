@@ -1,180 +1,222 @@
 """
-Page 2 — Narrative Orchestrator
-Pitches 3 distinct story concepts using the Gemini API, with optional domain steering.
+The Vault — Page 2: Narrative Orchestrator
+Transforms ingested curriculum payloads into 3 distinct narrative metaphor
+pitches using Gemini, auditions story blueprints, and routes selected concepts
+to the Production Engine (Page 3).
 """
+
+import os
+import re
 import streamlit as st
-from utils.orchestrator import UniverseOrchestrator, DIRECT_NARRATIVE_OPTION
-from utils.production import resolve_api_key
-from utils.constants import (
-    KEY_CURRICULUM_PAYLOAD,
-    KEY_ORCHESTRATOR_PITCHES,
-    KEY_ORCHESTRATOR_REPORT,
+import google.generativeai as genai
+
+# -----------------------------------------------------------------------------
+# PAGE CONFIGURATION
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="The Vault - Narrative Orchestrator",
+    page_icon="🧠",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-DOMAIN_OPTIONS = [
-    "Any / Multi-Domain (Default)",
-    # --- Direct Narrative / Non-Metaphor Mode ---
-    DIRECT_NARRATIVE_OPTION,
-    # --- Gen Z Native ---
-    "Gaming & Esports (In-Game Economies, Skill Trees, Battle Pass, Esports Teams)",
-    "Pop Culture & Celebrity Economy (Chart Wars, Streaming Royalties, Fan Armies, Brand Deals)",
-    "Social Media & Creator Economy (Algorithm Dynamics, Monetization, Platform Wars)",
-    "Sneaker & Streetwear Culture (Limited Drops, Resale Markets, Hype Cycles, Collabs)",
-    "Film, TV & Streaming Industry (Box Office Risk, Franchise Economics, Netflix vs. Studios)",
-    "Fashion & Trend Economics (Fast Fashion vs. Luxury, Trend Diffusion, Influencer Markets)",
-    "Space Exploration & Sci-Fi (Mission Economics, Colony Trade-offs, Interplanetary Markets)",
-    # --- Classic ---
-    "Sports, Athletics & Pro Leagues (Salary Caps, Draft Picks, Moneyball Analytics)",
-    "Food, Restaurant & Kitchen Dynamics (Kitchen Ops, Franchise vs. Independent, Recipe Trade-offs)",
-    "History & High-Stakes Cinematic Moments (Gold Rushes, Heists, Trade Routes, Revolutions)",
-    "Natural Systems & Ecology (Forest Networks, Predator/Prey, Ecosystem Balance)",
-    "Real-World Logistics & Transport (Airports, Shipping Lanes, Last-Mile Delivery)",
-    "Urban Planning & City Economics (Gentrification, Housing Markets, Infrastructure)",
-    "Performing Arts & Live Events (Tour Economics, Ticket Scalping, Festival Logistics)",
-]
+# -----------------------------------------------------------------------------
+# GEMINI API CLIENT SETUP
+# -----------------------------------------------------------------------------
+API_KEY = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
 
-st.set_page_config(page_title="The Vault - Orchestrate", page_icon="🧠", layout="wide")
+if API_KEY:
+    genai.configure(api_key=API_KEY)
 
 
-def _clean_pitch(raw: str) -> str:
-    """Strip JSON artifacts and normalise whitespace from a pitch string."""
-    raw = raw.strip().strip('"').strip("'")
-    raw = raw.replace("\\n", "\n").replace("\\t", "\t")
-    raw = raw.replace('\"', '"')
-    return raw.strip()
+# -----------------------------------------------------------------------------
+# PARSING & FORMATTING HELPERS
+# -----------------------------------------------------------------------------
+def parse_orchestrated_pitches(text: str) -> list[dict]:
+    """
+    Parses LLM output into individual pitch dictionaries containing title and body.
+    Supports markdown headers, 'PITCH 1:', 'CONCEPT 1:', or numbered formats.
+    """
+    # Split on Pitch/Concept markers
+    pattern = re.compile(
+        r"(?:^|\n)(?:###?\s*(?:PITCH|CONCEPT)\s*\d*:?|(?:PITCH|CONCEPT)\s*\d*:?)\s*",
+        re.IGNORECASE,
+    )
+    splits = pattern.split(text.strip())
+
+    pitches = []
+    # If regex found distinct blocks
+    if len(splits) > 1:
+        for idx, block in enumerate(splits[1:], start=1):
+            block = block.strip()
+            if not block:
+                continue
+            lines = [l.strip() for l in block.splitlines() if l.strip()]
+            title = lines[0].replace("**", "").replace("#", "").strip() if lines else f"Story Blueprint {idx}"
+            pitches.append({
+                "title": title,
+                "metaphor": block,
+            })
+
+    # Fallback: Split by double newlines if no explicit headers matched
+    if not pitches:
+        fallback_blocks = [b.strip() for b in text.split("\n\n") if len(b.strip()) > 60]
+        for idx, block in enumerate(fallback_blocks[:3], start=1):
+            lines = [l.strip() for l in block.splitlines() if l.strip()]
+            title = lines[0][:40] if lines else f"Story Blueprint {idx}"
+            pitches.append({
+                "title": title,
+                "metaphor": block,
+            })
+
+    # Final fallback if parsing produced nothing
+    if not pitches:
+        pitches.append({
+            "title": "Selected Narrative Blueprint",
+            "metaphor": text.strip(),
+        })
+
+    return pitches
 
 
-def _render_pitch_cards(pitches: list[str]) -> None:
-    st.divider()
-    st.markdown("### 🎬 Audition Pitch Cards")
-    st.caption("Review the 3 story concepts below. Select one to route to the Production Engine.")
+def _render_pitch_cards(pitches: list, topic_title: str) -> None:
+    """
+    Renders interactive pitch audition cards with clean enumerate scoping to
+    prevent NameError on button clicks, and syncs session state with Page 3.
+    """
+    st.markdown("### 🎭 Audition Narrative Pitches")
+    st.caption("Select a metaphor blueprint below to route it directly into the 90-second Production Engine.")
 
-    for idx, pitch_text in enumerate(pitches[:3]):
-        pitch_clean = _clean_pitch(pitch_text)
+    for pitch_idx, pitch in enumerate(pitches):
+        if isinstance(pitch, dict):
+            pitch_title = pitch.get("title", f"Pitch Concept {pitch_idx + 1}")
+            pitch_body = pitch.get("metaphor", pitch.get("content", str(pitch)))
+        else:
+            pitch_title = f"Pitch Concept {pitch_idx + 1}"
+            pitch_body = str(pitch)
 
-        # Extract title for the expander label
-        title_match = None
-        for line in pitch_clean.splitlines():
-            if line.startswith("### TITLE:"):
-                title_match = line.replace("### TITLE:", "").strip()
-                break
-        card_label = f"Pitch {idx + 1}: {title_match}" if title_match else f"Pitch {idx + 1}"
+        with st.expander(f"📌 Pitch {pitch_idx + 1}: {pitch_title}", expanded=(pitch_idx == 0)):
+            st.markdown(pitch_body)
 
-        with st.expander(f"📖 {card_label}", expanded=True):
-            lines = pitch_clean.splitlines()
-            for line in lines:
-                if line.startswith("### TITLE:"):
-                    st.markdown(f"## {line.replace('### TITLE:', '').strip()}")
-                elif line.startswith("**Domain Category**") or line.startswith("**Mode**"):
-                    st.markdown(f"🏷️ {line}")
-                elif line.startswith("**The Hook"):
-                    st.markdown(f"🎣 {line}")
-                elif line.startswith("**The Core Analogy**"):
-                    st.markdown(f"🔗 {line}")
-                elif line.startswith("**The Lift Index**"):
-                    st.markdown(f"📈 {line}")
-                elif line.startswith("**Visual Style / Pacing**") or line.startswith("**Format / Style**"):
-                    st.markdown(f"🎥 {line}")
-                elif line.startswith("**Narrative Arc / Beats**") or line.startswith("**Visual Flow**"):
-                    st.markdown(f"🎞️ {line}")
-                elif line.startswith("**Key Takeaway / Climax**") or line.startswith("**Climax**"):
-                    st.markdown(f"💡 {line}")
-                elif line.startswith("- "):
-                    st.markdown(line)
-                elif line.strip():
-                    st.markdown(line)
+            # Properly scoped pitch_idx in widget key
+            btn_key = f"select_pitch_btn_{pitch_idx}"
+            if st.button("🎬 Send to Production Engine", key=btn_key, type="primary"):
+                # 1. Sync standardized session keys for 3_Produce.py
+                st.session_state["selected_metaphor_pitch"] = pitch_body
+                st.session_state["active_topic"] = topic_title or pitch_title
+                st.session_state["selected_pitch"] = pitch_body
 
-            st.divider()
-            # When the user clicks "Select Pitch" in 2_Orchestrate.py:
-            if st.button("🎬 Send to Production Engine", key=f"select_pitch_{pitch_idx}"):
-                # 1. Store topic and metaphor under standardized keys
-                st.session_state["selected_metaphor_pitch"] = pitch_text
-                st.session_state["active_topic"] = topic_title
-                
-                # 2. CLEAR STALE PRODUCTION CACHE from previous runs
+                # 2. Invalidate stale cached production outputs
                 st.session_state.pop("prod_script", None)
                 st.session_state.pop("prod_mcqs", None)
                 st.session_state.pop("raw_production_output", None)
-                
-                st.success("✅ Pitch locked in! Navigate to '3_🎬_Produce' to generate the script.")
+                st.session_state.pop("last_generated_metaphor", None)
+
+                st.success(f"✅ '{pitch_title}' locked in! Open **3_🎬_Produce** in the sidebar to generate the script.")
 
 
-def main() -> None:
+# -----------------------------------------------------------------------------
+# MAIN APP INTERFACE
+# -----------------------------------------------------------------------------
+def main():
     st.title("🧠 NARRATIVE ORCHESTRATOR")
-    st.subheader("Audition 3 Narrative Concepts")
+    st.caption("Translate Academic & Economic Models into Universal Story Metaphors")
 
-    raw_curriculum = st.session_state.get(KEY_CURRICULUM_PAYLOAD)
-    if not raw_curriculum:
-        st.warning(
-            "⚠️ No curriculum payload found. Please visit the 📥 Curriculum Ingestor "
-            "page first to process your text or URL."
+    # Ingestion context retrieval
+    raw_payload = (
+        st.session_state.get("active_curriculum_payload")
+        or st.session_state.get("curriculum_payload")
+        or ""
+    )
+
+    with st.sidebar:
+        st.header("⚙️ Orchestrator Controls")
+        cohort_id = st.text_input("Cohort / Pilot ID", value="WIRAPIDS_12")
+        target_topic = st.text_input("Curriculum Topic", value="Incentives vs. Goals: Price Controls")
+        student_age = st.selectbox(
+            "Target Demographic",
+            ["High School Seniors (12th Grade)", "Introductory College", "Adult Continuing Ed"],
+            index=0,
         )
-        return
+        model_name = st.selectbox("Gemini Engine", ["gemini-2.5-flash", "gemini-2.5-pro"], index=0)
 
-    st.success("✅ Normalized curriculum detected from Ingestor.")
-    st.divider()
+        st.divider()
+        if st.button("🧹 Reset Orchestrator State", use_container_width=True):
+            st.session_state.pop("orchestrated_pitches_raw", None)
+            st.session_state.pop("parsed_pitches", None)
+            st.session_state.pop("selected_metaphor_pitch", None)
+            st.rerun()
 
-    # Domain selector
-    st.markdown("### 🎯 Preferred Metaphor Domain Focus")
-    preferred_domain = st.selectbox(
-        "Select a domain to guarantee at least one tailored concept, "
-        "or leave on Default for full automated diversity:",
-        options=DOMAIN_OPTIONS,
-        index=0,
-        help="Choose 'Direct Narrative' to extract literal chronological scenes for YouTube Shorts without analogies, or select a metaphor theme.",
-    )
-    st.divider()
+    # Ingested Payload Review
+    with st.expander("📑 View Ingested Curriculum Payload", expanded=not bool(raw_payload)):
+        curriculum_input = st.text_area(
+            "Source Curriculum Text:",
+            value=raw_payload,
+            height=180,
+            placeholder="Paste raw curriculum text or ingest via Page 1 (1_Ingest.py)...",
+        )
+        # Allow updating session state from here if entered manually
+        if curriculum_input != raw_payload:
+            st.session_state["active_curriculum_payload"] = curriculum_input
+            raw_payload = curriculum_input
 
-    # API key
-    api_key = resolve_api_key(st.secrets)
-    if not api_key:
-        api_key = st.text_input("Enter Gemini API Key manually:", type="password")
+    # Orchestration Generation
+    if st.button("✨ Brainstorm Story Metaphors", type="primary", use_container_width=True):
+        if not API_KEY:
+            st.error("❌ Gemini API Key not detected. Please configure GEMINI_API_KEY in your secrets.")
+            return
 
-    # Re-pitch guard
-    existing_pitches = st.session_state.get(KEY_ORCHESTRATOR_PITCHES)
-    if existing_pitches:
-        st.info("💡 Pitches already generated. Re-running will replace them and clear any active blueprint.")
+        if not raw_payload.strip():
+            st.warning("⚠️ Please provide source curriculum text above or ingest via Page 1.")
+            return
 
-    is_direct = preferred_domain == DIRECT_NARRATIVE_OPTION
-    btn_label = "🎬 Audition 3 Direct Narrative Concepts" if is_direct else "🎭 Audition 3 Metaphor Concepts"
-    spinner_label = (
-        "Extracting direct chronological story concepts for YouTube Shorts…"
-        if is_direct
-        else f"Pitching story concepts (Domain: {preferred_domain})…"
-    )
+        prompt = f"""
+You are the Executive Narrative Architect for 'The Vault', an educational platform delivering 90-second micro-documentaries.
 
-    if st.button(
-        btn_label,
-        type="primary",
-        use_container_width=True,
-        disabled=not api_key,
-    ):
-        with st.spinner(spinner_label):
+CURRICULUM TOPIC: {target_topic}
+TARGET COHORT: {cohort_id} ({student_age})
+SOURCE CURRICULUM:
+{raw_payload[:3000]}
+
+Your task is to invent THREE distinct, compelling story metaphor pitches designed to explain these concepts to 12th graders.
+Avoid dry textbook language. Root each pitch in an authentic, high-stakes real-world arena (e.g., sneaker reselling drops, battlefield medical triage, viral creator algorithms, post-war housing shortages, or underground arcade economies).
+
+Format your output EXACTLY as follows:
+
+PITCH 1: [Punchy Title]
+- Premise: [1-2 sentences setting the narrative stage and characters]
+- Metaphor Alignment: [How the real-world mechanic precisely maps to the economic principle]
+- The Climax / Decision Point: [The tension or trade-off faced by the protagonist]
+- Pedagogical Takeaway: [The enduring rule the student takes away]
+
+PITCH 2: [Punchy Title]
+- Premise: [1-2 sentences setting the narrative stage and characters]
+- Metaphor Alignment: [How the real-world mechanic precisely maps to the economic principle]
+- The Climax / Decision Point: [The tension or trade-off faced by the protagonist]
+- Pedagogical Takeaway: [The enduring rule the student takes away]
+
+PITCH 3: [Punchy Title]
+- Premise: [1-2 sentences setting the narrative stage and characters]
+- Metaphor Alignment: [How the real-world mechanic precisely maps to the economic principle]
+- The Climax / Decision Point: [The tension or trade-off faced by the protagonist]
+- Pedagogical Takeaway: [The enduring rule the student takes away]
+"""
+        with st.spinner("Orchestrating 3 narrative metaphor blueprints..."):
             try:
-                orchestrator = UniverseOrchestrator(api_key=api_key)
-                pitches = orchestrator.audition_metaphors(
-                    raw_curriculum=raw_curriculum,
-                    preferred_domain=preferred_domain,
-                )
-                if isinstance(pitches, str):
-                    import json
-                    try:
-                        pitches = json.loads(pitches)
-                    except Exception:
-                        pitches = [p.strip() for p in pitches.split("|||") if p.strip()]
-                st.session_state[KEY_ORCHESTRATOR_PITCHES] = pitches
-                st.session_state.pop(KEY_ORCHESTRATOR_REPORT, None)
-                st.toast("Story Pitches Generated Successfully! 🚀")
-            except ValueError as e:
-                st.error(f"❌ Input Error: {e}")
-            except RuntimeError as e:
-                st.error(f"❌ Orchestration Error: {e}")
-            except Exception as e:
-                st.error(f"❌ Unexpected Error: {e}")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                raw_text = response.text
 
-    pitches = st.session_state.get(KEY_ORCHESTRATOR_PITCHES, [])
-    if pitches:
-        _render_pitch_cards(pitches)
+                st.session_state["orchestrated_pitches_raw"] = raw_text
+                st.session_state["parsed_pitches"] = parse_orchestrated_pitches(raw_text)
+
+            except Exception as e:
+                st.error(f"❌ Orchestration Error: {e}")
+
+    # Render Pitches
+    if "parsed_pitches" in st.session_state and st.session_state["parsed_pitches"]:
+        st.divider()
+        _render_pitch_cards(st.session_state["parsed_pitches"], target_topic)
 
 
 if __name__ == "__main__":
