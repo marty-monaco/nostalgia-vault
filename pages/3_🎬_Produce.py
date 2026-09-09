@@ -53,10 +53,9 @@ active_topic_title = (
     or "Incentives vs. Goals: The Rent Control Paradox"
 )
 
-# Detect if the incoming pitch or topic changed since the last run
+# Invalidate cache if a new pitch arrived from Orchestrate
 last_used_pitch = st.session_state.get("last_generated_metaphor", None)
 if chosen_metaphor and last_used_pitch != chosen_metaphor:
-    # Purge stale generated outputs from memory
     st.session_state.pop("prod_script", None)
     st.session_state.pop("prod_mcqs", None)
     st.session_state.pop("raw_production_output", None)
@@ -86,7 +85,6 @@ def split_script_and_mcqs(text: str) -> tuple[str, str]:
         split_idx = match.start()
         script_part = text[:split_idx].strip()
         mcq_part = text[split_idx:].strip()
-        # Remove any leading Section 1 header tag
         script_part = re.sub(r"^SECTION\s*1\s*:[^\n]*\n?", "", script_part, flags=re.IGNORECASE).strip()
         return script_part, mcq_part
 
@@ -253,7 +251,7 @@ def main():
             st.session_state.pop("last_generated_metaphor", None)
             st.rerun()
 
-    # Context Card
+    # Context Review Expander
     with st.expander("📑 Active Ingested Payload & Metaphor Pitch", expanded=not bool(st.session_state.get("prod_script"))):
         c1, c2 = st.columns(2)
         with c1:
@@ -395,7 +393,6 @@ Explanation: [Rationale]
                     value=int(target_duration),
                 )
 
-            # Option Parsing
             parsed_questions = parse_mcq_text(st.session_state["prod_mcqs"])
 
             if len(parsed_questions) < 4:
