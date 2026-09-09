@@ -221,7 +221,12 @@ def main():
             ["High School Standard (12th Grade)", "AP / Introductory College", "Undergraduate Advanced"],
             index=0,
         )
-        model_name = st.selectbox("Gemini Model", ["gemini-1.5-pro", "gemini-1.5-flash"], index=0)
+        # NEW:
+        model_name = st.selectbox(
+            "Gemini Model", 
+            ["gemini-2.5-flash", "gemini-2.5-pro"], 
+            index=0
+        )
 
     # Active Context Preview
     with st.expander("📑 Active Curriculum Payload & Metaphor Context", expanded=False):
