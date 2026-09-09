@@ -1,6 +1,6 @@
 """
 The Vault — Page 3: Production Engine & Assessment Exporter
-Generates 90-second micro-documentary scripts, voiceover scene manifests,
+Generates 90-second micro-documentary scripts, timed scene manifests,
 calibrated 4-question retrieval assessments, and exports directly to
 TheVault_CMS_Core via clean CSV or copyable SQL INSERT statements.
 """
@@ -32,14 +32,45 @@ if API_KEY:
 
 
 # -----------------------------------------------------------------------------
-# ROBUST SPLITTING & PARSING HELPERS
+# CACHE INVALIDATION & SESSION RESOLUTION
+# -----------------------------------------------------------------------------
+curriculum_context = (
+    st.session_state.get("active_curriculum_payload")
+    or st.session_state.get("curriculum_payload")
+    or ""
+)
+
+chosen_metaphor = (
+    st.session_state.get("selected_metaphor_pitch")
+    or st.session_state.get("selected_pitch")
+    or st.session_state.get("active_metaphor")
+    or ""
+)
+
+active_topic_title = (
+    st.session_state.get("active_topic")
+    or st.session_state.get("selected_topic")
+    or "Incentives vs. Goals: The Rent Control Paradox"
+)
+
+# Detect if the incoming pitch or topic changed since the last run
+last_used_pitch = st.session_state.get("last_generated_metaphor", None)
+if chosen_metaphor and last_used_pitch != chosen_metaphor:
+    # Purge stale generated outputs from memory
+    st.session_state.pop("prod_script", None)
+    st.session_state.pop("prod_mcqs", None)
+    st.session_state.pop("raw_production_output", None)
+    st.session_state["last_generated_metaphor"] = chosen_metaphor
+
+
+# -----------------------------------------------------------------------------
+# ROBUST SPLITTING & ASSESSMENT PARSING HELPERS
 # -----------------------------------------------------------------------------
 def split_script_and_mcqs(text: str) -> tuple[str, str]:
     """
-    Intelligently splits the LLM output into the Script and Assessment sections
-    without colliding with source text section numbers (e.g., SECTION 4, SECTION 5).
+    Splits LLM output into Script and Assessment sections without colliding
+    with source curriculum headings (like SECTION 4 or SECTION 5).
     """
-    # Look for unambiguous assessment boundaries
     markers = [
         r"===+\s*ASSESSMENT",
         r"SECTION\s*2\s*:\s*CALIBRATED",
@@ -50,21 +81,20 @@ def split_script_and_mcqs(text: str) -> tuple[str, str]:
     ]
     pattern = re.compile("|".join(markers), re.IGNORECASE)
     match = pattern.search(text)
-    
+
     if match:
         split_idx = match.start()
         script_part = text[:split_idx].strip()
         mcq_part = text[split_idx:].strip()
-        # Clean leading section tags from script
+        # Remove any leading Section 1 header tag
         script_part = re.sub(r"^SECTION\s*1\s*:[^\n]*\n?", "", script_part, flags=re.IGNORECASE).strip()
         return script_part, mcq_part
 
-    # Fallback if no explicit marker matched
     return text, text
 
 
 def clean_question_text(q_text: str) -> str:
-    """Removes leftover header lines, numbering, and prompt artifacts."""
+    """Strips section labels, explanations, and question numbering."""
     lines = [line.strip() for line in q_text.splitlines() if line.strip()]
     cleaned = []
     for line in lines:
@@ -75,16 +105,13 @@ def clean_question_text(q_text: str) -> str:
             continue
         if lower.startswith("calibrated assessment") or lower.startswith("section"):
             continue
-        # Strip leading "Question 1:", "Question:", "1.", etc.
         line = re.sub(r"^(?:question\s*\d*:?|\d+[\.\)]\s*)", "", line, flags=re.IGNORECASE).strip()
         cleaned.append(line)
     return " ".join(cleaned).strip()
 
 
 def parse_mcq_text(text: str) -> list[dict]:
-    """
-    Extracts question stems, options (A-D), and declared correct answers.
-    """
+    """Extracts question stems, options A-D, and declared correct answers."""
     pattern = re.compile(
         r"(?P<q_text>[^\n\?]+(?:\?|\:|\.))\s*"
         r"(?:[A-D]\)|\(?A\))\s*(?P<opt_a>.*?)\s*"
@@ -126,8 +153,8 @@ def build_cms_row(
     parsed_questions: list[dict],
 ) -> dict:
     """
-    Maps questions into the exact 25-column schema for TheVault_CMS_Core.
-    Guarantees the correct answer is present in Opt1..Opt3.
+    Structures 4 parsed questions (2 Pre, 2 Post) into the 25-column schema
+    required by Supabase table TheVault_CMS_Core.
     """
     if len(parsed_questions) < 4:
         raise ValueError(f"Expected 4 MCQs, but parsed {len(parsed_questions)}.")
@@ -135,14 +162,13 @@ def build_cms_row(
     q1, q2, q3, q4 = parsed_questions[0], parsed_questions[1], parsed_questions[2], parsed_questions[3]
 
     def _select_3_options(q: dict) -> tuple[str, str, str]:
+        """Ensures the correct answer is guaranteed to be among the 3 options."""
         correct = q["correct_text"]
         opts = [opt for opt in q["options"] if opt]
         if correct in opts[:3]:
-            # Fill missing if less than 3
             while len(opts) < 3:
                 opts.append("")
             return opts[0], opts[1], opts[2]
-        # Swap 3rd option with correct answer if it was on D
         return (opts[0] if len(opts) > 0 else ""), (opts[1] if len(opts) > 1 else ""), correct
 
     pre_o1, pre_o2, pre_o3 = _select_3_options(q1)
@@ -180,7 +206,7 @@ def build_cms_row(
 
 
 def generate_sql_insert_statement(row: dict) -> str:
-    """Generates an escaped, executable SQL INSERT statement for Supabase."""
+    """Builds an escaped, copyable SQL statement for the Supabase SQL editor."""
     def esc(val):
         if val is None:
             return "NULL"
@@ -207,51 +233,50 @@ def main():
     st.title("🎬 PRODUCTION ENGINE")
     st.caption("Generate 90-Second Micro-Documentary Scripts & Calibrated Assessment Packages")
 
-    # Ingestion session context
-    curriculum_context = st.session_state.get("active_curriculum_payload", "")
-    chosen_metaphor = st.session_state.get("selected_metaphor_pitch", "")
-
     with st.sidebar:
-        st.header("⚙️ Parameters")
+        st.header("⚙️ Production Controls")
         target_pilot = st.text_input("Cohort / Pilot ID", value="WIRAPIDS_12")
-        topic_title = st.text_input("Curriculum Topic Title", value="What is Economics? Scarcity & Trade-Offs")
-        target_duration = st.slider("Target Duration (seconds)", min_value=60, max_value=120, value=85, step=5)
+        topic_title = st.text_input("Curriculum Topic Title", value=active_topic_title)
+        target_duration = st.slider("Target Duration (sec)", min_value=60, max_value=120, value=85, step=5)
         grade_level = st.selectbox(
             "Cognitive Rigor Level",
             ["High School Standard (12th Grade)", "AP / Introductory College", "Undergraduate Advanced"],
             index=0,
         )
-        # NEW:
-        model_name = st.selectbox(
-            "Gemini Model", 
-            ["gemini-2.5-flash", "gemini-2.5-pro"], 
-            index=0
-        )
+        model_name = st.selectbox("Gemini Model", ["gemini-2.5-flash", "gemini-2.5-pro"], index=0)
 
-    # Active Context Preview
-    with st.expander("📑 Active Curriculum Payload & Metaphor Context", expanded=False):
+        st.divider()
+        if st.button("🧹 Flush Production Memory", use_container_width=True):
+            st.session_state.pop("prod_script", None)
+            st.session_state.pop("prod_mcqs", None)
+            st.session_state.pop("raw_production_output", None)
+            st.session_state.pop("last_generated_metaphor", None)
+            st.rerun()
+
+    # Context Card
+    with st.expander("📑 Active Ingested Payload & Metaphor Pitch", expanded=not bool(st.session_state.get("prod_script"))):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Source Curriculum Payload:**")
             st.text_area(
                 "Payload View",
-                curriculum_context or "No active payload in session state. You can paste curriculum into Page 1 (Ingest).",
-                height=150,
+                curriculum_context or "No payload found. Load text via Page 1 (Ingest).",
+                height=130,
                 disabled=True,
             )
         with c2:
             st.markdown("**Selected Story Metaphor Pitch:**")
             st.text_area(
                 "Metaphor View",
-                chosen_metaphor or "Triage on the Battlefield: Scarcity and Alternative Uses Without Money",
-                height=150,
+                chosen_metaphor or "No metaphor selected. Choose one in Page 2 (Orchestrate).",
+                height=130,
                 disabled=True,
             )
 
-    # Trigger Generation
+    # Generation Button
     if st.button("🚀 Generate Script & Calibrated Assessment", type="primary", use_container_width=True):
         if not API_KEY:
-            st.error("❌ Gemini API Key not detected. Please configure GEMINI_API_KEY in your secrets or environment.")
+            st.error("❌ Gemini API Key not detected. Please configure GEMINI_API_KEY in your secrets.")
             return
 
         prompt = f"""
@@ -265,7 +290,7 @@ METAPHOR / STORY PREMISE: {chosen_metaphor or 'Relatable high-interest real worl
 SOURCE CURRICULUM:
 {curriculum_context[:3000]}
 
-Generate the output with these EXACT markers:
+Generate the output with these EXACT section markers:
 
 === SCRIPT MANIFEST ===
 Structure into 5 sequential timed scenes with visual cues [VISUAL] and voiceover script [VO]:
@@ -318,18 +343,18 @@ Explanation: [Rationale]
                 response = model.generate_content(prompt)
                 full_output = response.text
 
-                # Resilient splitting
                 script_txt, mcq_txt = split_script_and_mcqs(full_output)
                 st.session_state["prod_script"] = script_txt
                 st.session_state["prod_mcqs"] = mcq_txt
                 st.session_state["prod_topic"] = topic_title
                 st.session_state["prod_pilot"] = target_pilot
+                st.session_state["last_generated_metaphor"] = chosen_metaphor
 
             except Exception as e:
                 st.error(f"❌ Generation Error: {e}")
 
     # -------------------------------------------------------------------------
-    # DISPLAY & EXPORT TABS
+    # DISPLAY & EXPORT AREA
     # -------------------------------------------------------------------------
     if "prod_script" in st.session_state and "prod_mcqs" in st.session_state:
         st.divider()
@@ -345,7 +370,6 @@ Explanation: [Rationale]
 
         with tab_mcq:
             st.markdown("### 📝 Active Retrieval Assessment Package")
-            # Editable in case fine-tuning is desired
             edited_mcqs = st.text_area(
                 "MCQ Content (Editable)",
                 value=st.session_state["prod_mcqs"],
@@ -371,13 +395,13 @@ Explanation: [Rationale]
                     value=int(target_duration),
                 )
 
-            # Parse questions
+            # Option Parsing
             parsed_questions = parse_mcq_text(st.session_state["prod_mcqs"])
 
             if len(parsed_questions) < 4:
                 st.warning(
                     f"⚠️ The parser detected **{len(parsed_questions)} of 4** questions. "
-                    "Ensure all 4 questions end with a '?', list options A) through D), and declare 'Correct Answer: [Letter]'."
+                    "Ensure all 4 questions end with a '?', list options A) through D), and state 'Correct Answer: [Letter]'."
                 )
                 with st.expander("Show Diagnostic Text"):
                     st.text(st.session_state["prod_mcqs"])
