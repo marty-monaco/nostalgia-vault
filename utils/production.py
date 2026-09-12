@@ -1,189 +1,151 @@
 """
-utils/production.py
+production.py
 
-ProductionEngine: Wraps the Gemini API to generate an attention-gated video script
-(enforcing an 8-second hook) and a calibrated assessment package dynamically mapped
-to 4 distinct Bloom's Taxonomy academic rigor levels.
+Core Story & Curriculum Production Pipeline for The Vault.
+Coordinates narrative scripting, metadata synthesis, psychometrically guarded
+assessment item generation, and automated publishing to TheVault_CMS_Core.
 """
+
 import os
-import time
+import sys
 import logging
-from google import genai
-from google.genai import types
+import argparse
+from typing import Optional, Dict, Any
 
-logger = logging.getLogger(__name__)
+# Ensure project root / Utils is resolvable
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# ---------------------------------------------------------------------------
-# CONSTANTS
-# ---------------------------------------------------------------------------
-DEFAULT_MODEL       = "gemini-2.5-flash"
-DEFAULT_TEMPERATURE = 0.4
-MAX_RETRIES         = 3
-RETRY_DELAY_SEC     = 2.0
+from Utils.vault_curriculum_prompts import VaultModuleSchema
+from Utils.generate_and_ingest import generate_vault_module, ingest_module_to_supabase
 
-SYSTEM_INSTRUCTION = (
-    "You are an expert Instructional Designer, Cognitive Neuroscientist, and Media Producer. "
-    "Your job is to take a narrative metaphor concept and build it out into an attention-gated "
-    "90-second video script and a calibrated assessment package precisely tuned to the target academic level."
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
-
-BLUEPRINT_PROMPT_TEMPLATE = """\
-Using the following Selected Story Blueprint:
----
-{creative_report}
----
-
-TARGET COGNITIVE RIGOR LEVEL: {academic_level}
-
-Please generate a complete production payload broken into these two specific sections:
-
-### SECTION 1: 90-SECOND RUNNING VIDEO SCRIPT
-Write out the script chronologically using this temporal structure:
-
-* **PHASE 1: THE 8-SECOND ATTENTION HOOK (0:00 - 0:08)**
-  * **[VISUAL]**: A highly disruptive, cinematic, or visually shocking scene. No talking heads or slow text intros.
-  * **[AUDIO]**: A compelling hook line, psychological paradox, or dramatic question. \
-CRITICAL: No textbook definitions or jargon in these first 8 seconds. Establish curiosity first.
-
-* **PHASE 2: THE METAPHOR MAPPING & EXPOSITION (0:09 - 1:30)**
-  Sequential scenes (Scene 2, Scene 3, etc.). For each scene, provide:
-  * **[VISUAL]**: Vivid instructions for on-screen action, character movements, or animation changes.
-  * **[AUDIO]**: Voiceover resolving the hook by mapping the story world's rules to the technical concept.
-
-### SECTION 2: CALIBRATED ASSESSMENT PACKAGE
-Provide exactly 4 multiple-choice questions (options A, B, C, D; correct answer; 1-sentence explanation) \
-STRICTLY calibrated to: **{academic_level}**.
-
-* **2 Pre-Video Baseline Questions**: Testing the core academic concept directly.
-* **2 Post-Video Conceptual Questions**: Testing metaphor mapping and application.
-
-**RIGOR-SPECIFIC CALIBRATION:**
-* **High School Standard**: Basic term definitions and simple recall. Clear right/wrong answers.
-* **High School AP / Honors**: Direct structural mapping (e.g., "In the metaphor, what does X represent?"). \
-Functional understanding without complex edge cases.
-* **Undergraduate / University Level**: First-order consequences, equilibrium shifts, direct strategic trade-offs.
-* **Advanced Research / Graduate**: High cognitive complexity — weigh competing long-term incentives, \
-macroeconomic shocks, mathematical edge cases, or unintended system consequences. Distractors must be highly plausible.
-"""
+logger = logging.getLogger("VaultProduction")
 
 
-# ---------------------------------------------------------------------------
-# API KEY RESOLUTION — single source of truth for the whole app
-# ---------------------------------------------------------------------------
+class VaultProductionPipeline:
+    """Manages the creation, psychometric calibration, and DB synchronization of Vault modules."""
 
-def resolve_api_key(secrets=None) -> str:
-    """Return the Gemini API key from the first available source.
+    def __init__(self, default_pilot_id: str = "WIRAPIDS_12"):
+        self.default_pilot_id = default_pilot_id
 
-    Priority: Streamlit secrets → environment variable → empty string.
-
-    Args:
-        secrets: Pass st.secrets from the calling page. Keeping this parameter
-                 explicit prevents a Streamlit import in this util file, making
-                 the engine testable outside a Streamlit context.
-    """
-    if secrets is not None:
-        try:
-            return secrets.get("GEMINI_API_KEY", "")
-        except Exception:
-            pass
-    return os.environ.get("GEMINI_API_KEY", "")
-
-
-# ---------------------------------------------------------------------------
-# ENGINE
-# ---------------------------------------------------------------------------
-
-class ProductionEngine:
-    """Generates a video script and assessment package via the Gemini API.
-
-    Args:
-        api_key:     Gemini API key. Use resolve_api_key(st.secrets) before passing here.
-        model:       Gemini model name. Defaults to DEFAULT_MODEL.
-        temperature: Sampling temperature. Defaults to DEFAULT_TEMPERATURE.
-    """
-
-    def __init__(
+    def produce_and_publish(
         self,
-        api_key: str,
-        model: str = DEFAULT_MODEL,
-        temperature: float = DEFAULT_TEMPERATURE,
-    ) -> None:
-        if not api_key:
-            raise ValueError(
-                "Gemini API key is required. Use resolve_api_key(st.secrets) "
-                "from utils.production before instantiating ProductionEngine."
-            )
-        self.model       = model
-        self.temperature = temperature
-        self._client     = genai.Client(api_key=api_key)
-
-    # -----------------------------------------------------------------------
-    # PUBLIC
-    # -----------------------------------------------------------------------
-
-    def generate_blueprint(self, creative_report: str, academic_level: str) -> str:
-        """Return a production payload (8-second hooked script + calibrated quiz).
-
-        Args:
-            creative_report: Story blueprint string from UniverseOrchestrator.
-            academic_level:  One of the 4 rigor levels from ACADEMIC_LEVELS in Page 3.
-
-        Raises:
-            ValueError:    Empty creative_report.
-            RuntimeError:  API call failed after MAX_RETRIES attempts.
+        topic: str,
+        learning_objective: str,
+        video_url: str,
+        pilot_id: Optional[str] = None,
+        dry_run: bool = False
+    ) -> Dict[str, Any]:
         """
-        if not creative_report or not creative_report.strip():
-            raise ValueError("creative_report must not be empty.")
-        if not academic_level or not academic_level.strip():
-            raise ValueError("academic_level must not be empty.")
+        Executes the generation pipeline:
+        1. Synthesizes an 85s narrative micro-doc script.
+        2. Generates pre-test items calibrated against ceiling effects.
+        3. Generates post-test items strictly anchored to the narrative without domain jumps.
+        4. Ingests the validated record into TheVault_CMS_Core.
+        """
+        target_pilot = pilot_id or self.default_pilot_id
+        logger.info(f"Initiating production run for Topic: '{topic}' | Pilot: '{target_pilot}'")
 
-        prompt = BLUEPRINT_PROMPT_TEMPLATE.format(
-            creative_report=creative_report.strip(),
-            academic_level=academic_level,
-        )
-        return self._call_api_with_retry(prompt)
+        # Step 1 & 2: Generate schema-validated module via Gemini
+        try:
+            module_schema: VaultModuleSchema = generate_vault_module(
+                topic=topic,
+                pilot_id=target_pilot,
+                learning_objective=learning_objective
+            )
+            logger.info("Successfully synthesized script and calibrated assessment items.")
+        except Exception as e:
+            logger.error(f"Generation failure during prompt synthesis: {e}")
+            raise RuntimeError(f"Pipeline failed at generation stage: {e}") from e
 
-    # -----------------------------------------------------------------------
-    # PRIVATE
-    # -----------------------------------------------------------------------
+        # Self-Verification / Psychometric Sanity Check
+        self._audit_psychometrics(module_schema)
 
-    def _call_api_with_retry(self, prompt: str) -> str:
-        """Call Gemini with exponential backoff on transient failures."""
-        last_error: Exception | None = None
+        if dry_run:
+            logger.info("Dry run enabled. Skipping database ingestion.")
+            return {
+                "status": "dry_run_success",
+                "module_data": module_schema.model_dump()
+            }
 
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                response = self._client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        temperature=self.temperature,
-                    ),
+        # Step 3: Ingest into Supabase
+        try:
+            db_records = ingest_module_to_supabase(
+                module=module_schema,
+                pilot_id=target_pilot,
+                video_url=video_url
+            )
+            logger.info(f"Pipeline complete. Ingested into TheVault_CMS_Core for '{target_pilot}'.")
+            return {
+                "status": "published",
+                "topic": topic,
+                "pilot_id": target_pilot,
+                "db_records": db_records
+            }
+        except Exception as e:
+            logger.error(f"Database insertion failed: {e}")
+            raise RuntimeError(f"Pipeline failed at Supabase ingestion: {e}") from e
+
+    def _audit_psychometrics(self, schema: VaultModuleSchema) -> None:
+        """Runs rule-based checks on generated items to prevent known regressions."""
+        # Check Pre-test definitions ban
+        banned_stems = ["what is ", "define ", "which best describes the definition"]
+        for q_idx, q in [("Pre_Q1", schema.pre_q1), ("Pre_Q2", schema.pre_q2)]:
+            stem_lower = q.question.lower()
+            if any(b in stem_lower for b in banned_stems):
+                logger.warning(
+                    f"⚠️ Psychometric Warning [{q_idx}]: Question stem appears definitional: '{q.question}'. "
+                    "May induce ceiling effect."
                 )
-                text = response.text
-                if not text or not text.strip():
-                    raise ValueError("Gemini returned an empty response.")
-                return text
 
-            except ValueError:
-                raise  # Non-retryable
+        # Confirm answer options match declared correct keys
+        for q_name, q in [
+            ("Pre_Q1", schema.pre_q1), ("Pre_Q2", schema.pre_q2),
+            ("Post_Q1", schema.post_q1), ("Post_Q2", schema.post_q2)
+        ]:
+            opts = [q.opt1.strip(), q.opt2.strip(), q.opt3.strip()]
+            if q.correct_answer.strip() not in opts:
+                raise ValueError(
+                    f"Integrity Error in {q_name}: Declared correct answer '{q.correct_answer}' "
+                    f"does not match any option {opts}."
+                )
 
-            except Exception as e:
-                last_error = e
-                error_str  = str(e).lower()
 
-                if any(k in error_str for k in ("api key", "permission", "unauthorized", "invalid argument")):
-                    raise RuntimeError(f"Non-retryable API error: {e}") from e
+# ---------------------------------------------------------------------------
+# CLI INTERFACE
+# ---------------------------------------------------------------------------
 
-                if attempt < MAX_RETRIES:
-                    wait = RETRY_DELAY_SEC * (2 ** (attempt - 1))
-                    logger.warning(
-                        "Gemini attempt %d/%d failed (%s). Retrying in %.1fs…",
-                        attempt, MAX_RETRIES, e, wait,
-                    )
-                    time.sleep(wait)
+def main():
+    parser = argparse.ArgumentParser(description="The Vault Story Production & Ingestion Pipeline")
+    parser.add_argument("--topic", type=str, required=True, help="Topic title (e.g., 'Desert of Thirst')")
+    parser.add_argument("--objective", type=str, required=True, help="Core economic mechanism and misconception")
+    parser.add_argument("--video_url", type=str, default="", help="YouTube watch/short URL or CDN stream link")
+    parser.add_argument("--pilot", type=str, default="WIRAPIDS_12", help="Target Pilot ID")
+    parser.add_argument("--dry_run", action="store_true", help="Generate and audit without saving to database")
 
-        raise RuntimeError(
-            f"Gemini API failed after {MAX_RETRIES} attempts. Last error: {last_error}"
-        ) from last_error
+    args = parser.parse_args()
+
+    pipeline = VaultProductionPipeline(default_pilot_id=args.pilot)
+    result = pipeline.produce_and_publish(
+        topic=args.topic,
+        learning_objective=args.objective,
+        video_url=args.video_url,
+        pilot_id=args.pilot,
+        dry_run=args.dry_run
+    )
+
+    print("\n--- Production Run Summary ---")
+    print(f"Status: {result['status']}")
+    if args.dry_run:
+        print(f"Script: {result['module_data']['video_script']}")
+        print(f"Pre Q1: {result['module_data']['pre_q1']['question']}")
+        print(f"Post Q1: {result['module_data']['post_q1']['question']}")
+    else:
+        print(f"Successfully published '{args.topic}' for pilot '{args.pilot}'.")
+
+
+if __name__ == "__main__":
+    main()
