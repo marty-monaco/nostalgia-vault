@@ -4,8 +4,6 @@ utils/orchestrator.py
 UniverseOrchestrator: Generates 3 distinct narrative metaphor concepts
 from raw curriculum strings using the Gemini API, with optional domain steering
 and support for Direct Narrative (literal storyboarding for YouTube Shorts).
-
-Uses Pydantic structured output and bounded thinking tokens to prevent UI deadlocks.
 """
 import time
 import logging
