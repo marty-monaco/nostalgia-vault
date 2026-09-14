@@ -3,12 +3,19 @@ Page 1 — Curriculum Ingestor
 Supports smart auto-crawl (Methods 1 & 2), manual batch URL ingestion,
 raw text normalization, and PDF textbook extraction into Session State.
 """
+import sys
+import os
 import streamlit as st
 import pypdf
+
+# Ensure root directory is importable
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from utils.ingestion import CurriculumIngestor, IngestionError
 from utils.constants import KEY_CURRICULUM_PAYLOAD
 
 MIN_PAYLOAD_CHARS = 500
+MAX_PDF_FILE_MB   = 25
 
 st.set_page_config(page_title="The Vault - Ingest", page_icon="📥", layout="wide")
 
@@ -38,7 +45,7 @@ def _extract_pdf_text(uploaded_file, start_page: int, end_page: int) -> str:
     """Extract and combine text from a range of pages in an uploaded PDF."""
     reader = pypdf.PdfReader(uploaded_file)
     total_pages = len(reader.pages)
-    
+
     # Bound pages within the document range
     start_idx = max(0, start_page - 1)
     end_idx = min(total_pages, end_page)
@@ -89,15 +96,17 @@ def main() -> None:
         seed_url = st.text_input(
             "Paste any URL from the chapter:",
             placeholder="https://openstax.org/books/principles-microeconomics-3e/pages/18-1-voter-participation-and-costs-of-elections",
+            key="input_seed_url",
         )
 
         if st.button("🤖 Auto-Discover & Fetch Chapter", type="primary", key="btn_smart"):
-            if not seed_url.strip():
+            clean_seed = seed_url.strip()
+            if not clean_seed:
                 st.warning("⚠️ Please enter a URL.")
             else:
                 with st.spinner("Scanning for related chapter sections…"):
                     try:
-                        payload, discovered_urls = ingestor.smart_crawl(seed_url.strip())
+                        payload, discovered_urls = ingestor.smart_crawl(clean_seed)
                         st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
 
                         st.success(
@@ -135,6 +144,7 @@ def main() -> None:
                 "https://openstax.org/books/principles-microeconomics-3e/pages/18-2-special-interest-politics\n"
                 "https://openstax.org/books/principles-microeconomics-3e/pages/18-3-flaws-in-democratic-system"
             ),
+            key="input_batch_urls",
         )
 
         if st.button("🚀 Fetch & Normalize Batch", type="primary", key="btn_batch"):
@@ -162,15 +172,17 @@ def main() -> None:
             "Paste Curriculum Text:",
             height=250,
             placeholder="Paste syllabus notes, textbook content, or topic outlines here…",
+            key="input_raw_text",
         )
 
         if st.button("⚙️ Process & Normalize Text", type="primary", key="btn_raw"):
-            if not raw_text_input.strip():
+            clean_text = raw_text_input.strip()
+            if not clean_text:
                 st.warning("⚠️ Please paste text into the box above.")
             else:
                 with st.spinner("Normalizing curriculum text…"):
                     try:
-                        payload = ingestor.normalize_text(raw_text_input)
+                        payload = ingestor.normalize_text(clean_text)
                         st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
                         st.success("🎉 Text normalized and cached!")
                     except IngestionError as e:
@@ -191,42 +203,58 @@ def main() -> None:
         pdf_file = st.file_uploader("Choose a PDF file", type=["pdf"], key="pdf_uploader")
 
         if pdf_file is not None:
-            # Inspect page count
-            try:
-                temp_reader = pypdf.PdfReader(pdf_file)
-                total_pages = len(temp_reader.pages)
-                st.info(f"📑 PDF loaded: **{pdf_file.name}** ({total_pages} total pages)")
+            file_size_mb = pdf_file.size / (1024 * 1024)
+            if file_size_mb > MAX_PDF_FILE_MB:
+                st.error(
+                    f"❌ File exceeds the maximum allowed size of {MAX_PDF_FILE_MB}MB "
+                    f"({file_size_mb:.1f}MB uploaded). Please upload a smaller section or extract chapters."
+                )
+            else:
+                try:
+                    temp_reader = pypdf.PdfReader(pdf_file)
+                    total_pages = len(temp_reader.pages)
+                    st.info(f"📑 PDF loaded: **{pdf_file.name}** ({total_pages} total pages)")
 
-                col_start, col_end = st.columns(2)
-                with col_start:
-                    start_page = st.number_input(
-                        "Start Page:", min_value=1, max_value=total_pages, value=1, step=1
-                    )
-                with col_end:
-                    end_page = st.number_input(
-                        "End Page:", min_value=1, max_value=total_pages, value=min(20, total_pages), step=1
-                    )
+                    col_start, col_end = st.columns(2)
+                    with col_start:
+                        start_page = st.number_input(
+                            "Start Page:", min_value=1, max_value=total_pages, value=1, step=1
+                        )
+                    with col_end:
+                        end_page = st.number_input(
+                            "End Page:",
+                            min_value=1,
+                            max_value=total_pages,
+                            value=min(20, total_pages),
+                            step=1,
+                        )
 
-                if st.button("📑 Extract & Normalize PDF Chapter", type="primary", key="btn_pdf"):
-                    if start_page > end_page:
-                        st.error("Start page cannot be greater than end page.")
-                    else:
-                        with st.spinner(f"Extracting pages {start_page} to {end_page}…"):
-                            try:
-                                raw_pdf_text = _extract_pdf_text(pdf_file, int(start_page), int(end_page))
-                                if not raw_pdf_text.strip():
-                                    st.warning("⚠️ No readable text found in those pages (they might be scanned images).")
-                                else:
-                                    payload = ingestor.normalize_text(raw_pdf_text)
-                                    st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
-                                    st.success(f"🎉 Extracted {end_page - start_page + 1} page(s) and normalized!")
-                            except IngestionError as e:
-                                st.error(f"❌ Ingestion Error: {e}")
-                            except Exception as e:
-                                st.error(f"❌ Unexpected Error: {e}")
+                    if st.button("📑 Extract & Normalize PDF Chapter", type="primary", key="btn_pdf"):
+                        if start_page > end_page:
+                            st.error("Start page cannot be greater than end page.")
+                        else:
+                            with st.spinner(f"Extracting pages {start_page} to {end_page}…"):
+                                try:
+                                    raw_pdf_text = _extract_pdf_text(
+                                        pdf_file, int(start_page), int(end_page)
+                                    )
+                                    if not raw_pdf_text.strip():
+                                        st.warning(
+                                            "⚠️ No readable text found in those pages (they might be scanned images)."
+                                        )
+                                    else:
+                                        payload = ingestor.normalize_text(raw_pdf_text)
+                                        st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
+                                        st.success(
+                                            f"🎉 Extracted {int(end_page) - int(start_page) + 1} page(s) and normalized!"
+                                        )
+                                except IngestionError as e:
+                                    st.error(f"❌ Ingestion Error: {e}")
+                                except Exception as e:
+                                    st.error(f"❌ Unexpected Error: {e}")
 
-            except Exception as e:
-                st.error(f"Failed to read PDF file: {e}")
+                except Exception as e:
+                    st.error(f"Failed to parse PDF document: {e}")
 
     # -----------------------------------------------------------------------
     # PAYLOAD PREVIEW (all tabs)
