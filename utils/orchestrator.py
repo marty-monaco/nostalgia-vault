@@ -172,3 +172,16 @@ class UniverseOrchestrator:
                     time.sleep(RETRY_DELAY_SEC * attempt)
 
         raise RuntimeError(f"Failed to generate story audition pitches after {MAX_RETRIES} attempts: {last_error}")
+
+    def audition_metaphors(
+        self,
+        curriculum_text: str,
+        domain_choice: str = DEFAULT_DOMAIN,
+        temperature: float = DEFAULT_TEMPERATURE
+    ) -> PitchAuditionResponse:
+        """Backward-compatible alias for audition_pitches."""
+        return self.audition_pitches(
+            curriculum_text=curriculum_text,
+            domain_choice=domain_choice,
+            temperature=temperature
+        )
