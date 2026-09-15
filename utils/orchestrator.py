@@ -96,3 +96,85 @@ SYSTEM_INSTRUCTION_DIRECT = (
 
 AUDITION_METAPHOR_TEMPLATE = """\
 Analyze the following educational material:
+{curriculum_text}
+
+Generate exactly three (3) distinct story pitches that transform these underlying mechanics into engaging narrative metaphors.
+Domain Steering Instruction: {domain_instruction}
+"""
+
+AUDITION_DIRECT_TEMPLATE = """
+
+Analyze the following educational source material:
+
+{curriculum_text}
+
+Generate exactly three (3) distinct YouTube Shorts storyboard concepts that depict these events or concepts directly and literally, without using metaphors or allegories.
+Directorial Focus: {domain_instruction}
+"""
+
+---------------------------------------------------------------------------
+ORCHESTRATOR CLASS
+---------------------------------------------------------------------------
+class UniverseOrchestrator:
+"""Orchestrates structured conceptual auditions from curriculum text."""
+
+def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
+    if not api_key:
+        raise ValueError("An API key is required to initialize UniverseOrchestrator.")
+    self.client = genai.Client(api_key=api_key)
+    self.model = model
+
+def audition_pitches(
+    self,
+    curriculum_text: str,
+    domain_choice: str = DEFAULT_DOMAIN,
+    temperature: float = DEFAULT_TEMPERATURE
+) -> PitchAuditionResponse:
+    """
+    Calls Gemini with structured outputs to return 3 distinct story concepts.
+    """
+    is_direct = (domain_choice == DIRECT_NARRATIVE_OPTION)
+
+    if is_direct:
+        system_instruction = SYSTEM_INSTRUCTION_DIRECT
+        domain_instruction = "Direct visual storyboards with high narrative pacing and literal fidelity."
+        prompt = AUDITION_DIRECT_TEMPLATE.format(
+            curriculum_text=curriculum_text,
+            domain_instruction=domain_instruction
+        )
+    else:
+        system_instruction = SYSTEM_INSTRUCTION_METAPHOR
+        if domain_choice == DEFAULT_DOMAIN:
+            domain_instruction = "Draw from 3 completely different domains with preference for Gen Z native categories."
+        else:
+            domain_instruction = f"Prioritize concepts aligned with or inspired by: {domain_choice}."
+        prompt = AUDITION_METAPHOR_TEMPLATE.format(
+            curriculum_text=curriculum_text,
+            domain_instruction=domain_instruction
+        )
+
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        temperature=temperature,
+        response_mime_type="application/json",
+        response_schema=PitchAuditionResponse
+    )
+
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config
+            )
+            if response.parsed:
+                return response.parsed
+            raise ValueError("Model response did not contain structured parsed data.")
+        except Exception as e:
+            last_error = e
+            logger.warning("Audition pitch attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)
+
+    raise RuntimeError(f"Failed to generate story audition pitches after {MAX_RETRIES} attempts: {last_error}")
