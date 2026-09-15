@@ -12,7 +12,7 @@ import logging
 import argparse
 from typing import Optional, Dict, Any
 
-# Ensure root directory is importable
+# Ensure project root / Utils is resolvable
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from Utils.vault_curriculum_prompts import VaultModuleSchema
@@ -35,7 +35,7 @@ class VaultProductionPipeline:
         self,
         topic: str,
         learning_objective: str,
-        video_url: str = "",
+        video_url: str,
         pilot_id: Optional[str] = None,
         dry_run: bool = False
     ) -> Dict[str, Any]:
@@ -46,19 +46,15 @@ class VaultProductionPipeline:
         3. Generates post-test items strictly anchored to the narrative without domain jumps.
         4. Ingests the validated record into TheVault_CMS_Core.
         """
-        target_pilot = (pilot_id or self.default_pilot_id).strip()
-        clean_topic = topic.strip()
-        clean_obj = learning_objective.strip()
-        clean_url = (video_url or "").strip()
-
-        logger.info(f"Initiating production run for Topic: '{clean_topic}' | Pilot: '{target_pilot}'")
+        target_pilot = pilot_id or self.default_pilot_id
+        logger.info(f"Initiating production run for Topic: '{topic}' | Pilot: '{target_pilot}'")
 
         # Step 1 & 2: Generate schema-validated module via Gemini
         try:
             module_schema: VaultModuleSchema = generate_vault_module(
-                topic=clean_topic,
+                topic=topic,
                 pilot_id=target_pilot,
-                learning_objective=clean_obj
+                learning_objective=learning_objective
             )
             logger.info("Successfully synthesized script and calibrated assessment items.")
         except Exception as e:
@@ -80,12 +76,12 @@ class VaultProductionPipeline:
             db_records = ingest_module_to_supabase(
                 module=module_schema,
                 pilot_id=target_pilot,
-                video_url=clean_url
+                video_url=video_url
             )
             logger.info(f"Pipeline complete. Ingested into TheVault_CMS_Core for '{target_pilot}'.")
             return {
                 "status": "published",
-                "topic": clean_topic,
+                "topic": topic,
                 "pilot_id": target_pilot,
                 "db_records": db_records
             }
@@ -98,45 +94,24 @@ class VaultProductionPipeline:
         # Check Pre-test definitions ban
         banned_stems = ["what is ", "define ", "which best describes the definition"]
         for q_idx, q in [("Pre_Q1", schema.pre_q1), ("Pre_Q2", schema.pre_q2)]:
-            stem_lower = q.question.lower().strip()
+            stem_lower = q.question.lower()
             if any(b in stem_lower for b in banned_stems):
                 logger.warning(
                     f"⚠️ Psychometric Warning [{q_idx}]: Question stem appears definitional: '{q.question}'. "
                     "May induce ceiling effect."
                 )
 
-        # Confirm answer options match declared correct keys with normalization
+        # Confirm answer options match declared correct keys
         for q_name, q in [
             ("Pre_Q1", schema.pre_q1), ("Pre_Q2", schema.pre_q2),
             ("Post_Q1", schema.post_q1), ("Post_Q2", schema.post_q2)
         ]:
             opts = [q.opt1.strip(), q.opt2.strip(), q.opt3.strip()]
-            correct_norm = q.correct_answer.strip()
-            if correct_norm not in opts:
-                matched = next((o for o in opts if o.lower() == correct_norm.lower()), None)
-                if matched:
-                    q.correct_answer = matched
-                else:
-                    raise ValueError(
-                        f"Integrity Error in {q_name}: Declared correct answer '{q.correct_answer}' "
-                        f"does not match any option: {opts}."
-                    )
-
-
-def produce_module(
-    topic: str,
-    learning_objective: str,
-    video_url: str = "",
-    pilot_id: str = "WIRAPIDS_12"
-) -> Dict[str, Any]:
-    """Helper entry point for Streamlit UI modules."""
-    pipeline = VaultProductionPipeline(default_pilot_id=pilot_id)
-    return pipeline.produce_and_publish(
-        topic=topic,
-        learning_objective=learning_objective,
-        video_url=video_url,
-        pilot_id=pilot_id
-    )
+            if q.correct_answer.strip() not in opts:
+                raise ValueError(
+                    f"Integrity Error in {q_name}: Declared correct answer '{q.correct_answer}' "
+                    f"does not match any option {opts}."
+                )
 
 
 # ---------------------------------------------------------------------------
