@@ -13,9 +13,9 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # CONSTANTS
-# ---------------------------------------------------------------------------
+# ===========================================================================
 DEFAULT_MODEL       = "gemini-2.5-flash"
 DEFAULT_TEMPERATURE = 0.7   # Higher for creative narrative variety
 MAX_RETRIES         = 3
@@ -24,9 +24,9 @@ DEFAULT_DOMAIN      = "Any / Multi-Domain (Default)"
 
 DIRECT_NARRATIVE_OPTION = "Direct Narrative / Source-Faithful (Literal Storyboard for YouTube Shorts, No Metaphors)"
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # PYDANTIC STRUCTURED OUTPUT CONTRACTS
-# ---------------------------------------------------------------------------
+# ===========================================================================
 class StoryPitch(BaseModel):
     title: str = Field(description="The catchy title of the story or short")
     domain_category: str = Field(description="Domain from the taxonomy or 'Direct Narrative'")
@@ -50,9 +50,9 @@ class PitchAuditionResponse(BaseModel):
         description="Exactly 3 completely distinct story concepts"
     )
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # SYSTEM INSTRUCTIONS & TEMPLATES
-# ---------------------------------------------------------------------------
+# ===========================================================================
 SYSTEM_INSTRUCTION_METAPHOR = (
     "You are an elite Creative Director, Narrative Designer, and Instructional Expert "
     "who specializes in reaching Gen Z students who have grown up on TikTok, YouTube, "
@@ -108,9 +108,9 @@ AUDITION_DIRECT_TEMPLATE = (
     "Directorial Focus: {domain_instruction}\n"
 )
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # ORCHESTRATOR CLASS
-# ---------------------------------------------------------------------------
+# ===========================================================================
 class UniverseOrchestrator:
     """Orchestrates structured conceptual auditions from curriculum text."""
 
