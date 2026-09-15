@@ -35,7 +35,7 @@ class VaultProductionPipeline:
         self,
         topic: str,
         learning_objective: str,
-        video_url: str,
+        video_url: str = "",
         pilot_id: Optional[str] = None,
         dry_run: bool = False
     ) -> Dict[str, Any]:
@@ -101,17 +101,22 @@ class VaultProductionPipeline:
                     "May induce ceiling effect."
                 )
 
-        # Confirm answer options match declared correct keys
+       # Confirm answer options match declared correct keys with case-insensitive fallback
         for q_name, q in [
             ("Pre_Q1", schema.pre_q1), ("Pre_Q2", schema.pre_q2),
             ("Post_Q1", schema.post_q1), ("Post_Q2", schema.post_q2)
         ]:
             opts = [q.opt1.strip(), q.opt2.strip(), q.opt3.strip()]
-            if q.correct_answer.strip() not in opts:
-                raise ValueError(
-                    f"Integrity Error in {q_name}: Declared correct answer '{q.correct_answer}' "
-                    f"does not match any option {opts}."
-                )
+            correct_norm = q.correct_answer.strip()
+            if correct_norm not in opts:
+                matched = next((o for o in opts if o.lower() == correct_norm.lower()), None)
+                if matched:
+                    q.correct_answer = matched
+                else:
+                    raise ValueError(
+                        f"Integrity Error in {q_name}: Declared correct answer '{q.correct_answer}' "
+                        f"does not match any option {opts}."
+                    )
 
 
 # ---------------------------------------------------------------------------
