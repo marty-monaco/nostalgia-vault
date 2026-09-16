@@ -142,7 +142,9 @@ def _render_refinement_interface(orchestrator: UniverseOrchestrator, response: P
     # Pitch selector
     pitch_options = [f"Pitch {i+1}: {p.title[:30]}" for i, p in enumerate(response.pitches)]
     selected_pitch_label = st.selectbox("Select a pitch to refine:", pitch_options, key="refine_pitch_selector")
-    selected_pitch_idx = int(selected_pitch_label[0]) - 1  # Extract index
+    
+    # Extract pitch index from label (e.g., "Pitch 1: ..." -> 0)
+    selected_pitch_idx = int(selected_pitch_label.split(":")[0].split()[-1]) - 1
     
     # Display current pitch
     with st.expander("📖 Current Pitch", expanded=False):
