@@ -1,167 +1,451 @@
 """
-Page 1 — Curriculum Ingestor
-Supports smart auto-crawl (Methods 1 & 2), manual batch URL ingestion,
-raw text normalization, and PDF textbook extraction into Session State.
+The Vault — Page 3: Production Engine & Assessment Exporter
+Generates 90-second micro-documentary scripts, timed scene manifests,
+calibrated 4-question retrieval assessments, and exports directly to
+TheVault_CMS_Core via clean CSV or copyable SQL INSERT statements.
 """
+
+import os
+import re
+import pandas as pd
 import streamlit as st
-import pypdf
-from utils.ingestion import CurriculumIngestor, IngestionError
-from utils.constants import KEY_CURRICULUM_PAYLOAD
+import google.generativeai as genai
+from datetime import datetime
 
-MIN_PAYLOAD_CHARS = 500
-MAX_PDF_FILE_MB   = 25
+# -----------------------------------------------------------------------------
+# PAGE CONFIGURATION
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="The Vault - Production Engine",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-st.set_page_config(page_title="The Vault - Ingest", page_icon="📥", layout="wide")
+# -----------------------------------------------------------------------------
+# GEMINI API CLIENT SETUP
+# -----------------------------------------------------------------------------
+API_KEY = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
+
+if API_KEY:
+    genai.configure(api_key=API_KEY)
 
 
-def _render_payload_preview(payload: str) -> None:
-    st.divider()
-    st.markdown("### 📄 Active Curriculum Payload in Memory")
+# -----------------------------------------------------------------------------
+# CACHE INVALIDATION & SESSION RESOLUTION
+# -----------------------------------------------------------------------------
+curriculum_context = (
+    st.session_state.get("active_curriculum_payload")
+    or st.session_state.get("curriculum_payload")
+    or ""
+)
 
-    col1, col2 = st.columns(2)
-    col1.metric("Characters", f"{len(payload):,}")
-    col2.metric("Words (approx)", f"{len(payload.split()):,}")
+chosen_metaphor = (
+    st.session_state.get("selected_metaphor_pitch")
+    or st.session_state.get("selected_pitch")
+    or st.session_state.get("active_metaphor")
+    or ""
+)
 
-    if len(payload) < MIN_PAYLOAD_CHARS:
-        st.warning(
-            f"⚠️ Payload is very short ({len(payload):,} chars). "
-            "Metaphor generation may produce weak results — consider adding more content."
+active_topic_title = (
+    st.session_state.get("active_topic")
+    or st.session_state.get("selected_topic")
+    or "Incentives vs. Goals: The Rent Control Paradox"
+)
+
+# Invalidate cache if a new pitch arrived from Orchestrate
+last_used_pitch = st.session_state.get("last_generated_metaphor", None)
+if chosen_metaphor and last_used_pitch != chosen_metaphor:
+    st.session_state.pop("prod_script", None)
+    st.session_state.pop("prod_mcqs", None)
+    st.session_state.pop("raw_production_output", None)
+    st.session_state["last_generated_metaphor"] = chosen_metaphor
+
+
+# -----------------------------------------------------------------------------
+# ROBUST SPLITTING & ASSESSMENT PARSING HELPERS
+# -----------------------------------------------------------------------------
+def split_script_and_mcqs(text: str) -> tuple[str, str]:
+    """
+    Splits LLM output into Script and Assessment sections without colliding
+    with source curriculum headings (like SECTION 4 or SECTION 5).
+    """
+    markers = [
+        r"===+\s*ASSESSMENT",
+        r"SECTION\s*2\s*:\s*CALIBRATED",
+        r"CALIBRATED\s*ASSESSMENT\s*PACKAGE",
+        r"ASSESSMENT\s*PACKAGE\s*:",
+        r"2\s*Pre-Video\s*Baseline\s*Questions",
+        r"Pre-Video\s*Baseline\s*Questions",
+    ]
+    pattern = re.compile("|".join(markers), re.IGNORECASE)
+    match = pattern.search(text)
+
+    if match:
+        split_idx = match.start()
+        script_part = text[:split_idx].strip()
+        mcq_part = text[split_idx:].strip()
+        script_part = re.sub(r"^SECTION\s*1\s*:[^\n]*\n?", "", script_part, flags=re.IGNORECASE).strip()
+        return script_part, mcq_part
+
+    return text, text
+
+
+def clean_question_text(q_text: str) -> str:
+    """Strips section labels, explanations, and question numbering."""
+    lines = [line.strip() for line in q_text.splitlines() if line.strip()]
+    cleaned = []
+    for line in lines:
+        lower = line.lower()
+        if lower.startswith("explanation:"):
+            continue
+        if "pre-video" in lower or "post-video" in lower:
+            continue
+        if lower.startswith("calibrated assessment") or lower.startswith("section"):
+            continue
+        line = re.sub(r"^(?:question\s*\d*:?|\d+[\.\)]\s*)", "", line, flags=re.IGNORECASE).strip()
+        cleaned.append(line)
+    return " ".join(cleaned).strip()
+
+
+def parse_mcq_text(text: str) -> list[dict]:
+    """Extracts question stems, options A-D, and declared correct answers."""
+    pattern = re.compile(
+        r"(?P<q_text>[^\n\?]+(?:\?|\:|\.))\s*"
+        r"(?:[A-D]\)|\(?A\))\s*(?P<opt_a>.*?)\s*"
+        r"(?:[B-D]\)|\(?B\))\s*(?P<opt_b>.*?)\s*"
+        r"(?:[C-D]\)|\(?C\))\s*(?P<opt_c>.*?)\s*"
+        r"(?:(?:D\)|\(?D\))\s*(?P<opt_d>.*?)\s*)?"
+        r"Correct\s*Answer\s*:\s*(?P<ans>[A-D])",
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    matches = list(pattern.finditer(text))
+    parsed = []
+    for m in matches:
+        q = clean_question_text(m.group("q_text"))
+        a = m.group("opt_a").strip().replace("\n", " ")
+        b = m.group("opt_b").strip().replace("\n", " ")
+        c = m.group("opt_c").strip().replace("\n", " ")
+        d = m.group("opt_d").strip().replace("\n", " ") if m.group("opt_d") else ""
+        ans_letter = m.group("ans").upper()
+
+        opt_dict = {"A": a, "B": b, "C": c, "D": d}
+        correct_text = opt_dict.get(ans_letter, "")
+
+        if q:
+            parsed.append({
+                "question": q,
+                "options": [a, b, c, d],
+                "correct_letter": ans_letter,
+                "correct_text": correct_text,
+            })
+    return parsed
+
+
+def build_cms_row(
+    topic: str,
+    video_url: str,
+    video_len: int,
+    pilot_id: str,
+    parsed_questions: list[dict],
+) -> dict:
+    """
+    Structures 4 parsed questions (2 Pre, 2 Post) into the 25-column schema
+    required by Supabase table TheVault_CMS_Core.
+    """
+    if len(parsed_questions) < 4:
+        raise ValueError(f"Expected 4 MCQs, but parsed {len(parsed_questions)}.")
+
+    q1, q2, q3, q4 = parsed_questions[0], parsed_questions[1], parsed_questions[2], parsed_questions[3]
+
+    def _select_3_options(q: dict) -> tuple[str, str, str]:
+        """Ensures the correct answer is guaranteed to be among the 3 options."""
+        correct = q["correct_text"]
+        opts = [opt for opt in q["options"] if opt]
+        if correct in opts[:3]:
+            while len(opts) < 3:
+                opts.append("")
+            return opts[0], opts[1], opts[2]
+        return (opts[0] if len(opts) > 0 else ""), (opts[1] if len(opts) > 1 else ""), correct
+
+    pre_o1, pre_o2, pre_o3 = _select_3_options(q1)
+    pre_o1_q2, pre_o2_q2, pre_o3_q2 = _select_3_options(q2)
+    pst_o1, pst_o2, pst_o3 = _select_3_options(q3)
+    pst_o1_q2, pst_o2_q2, pst_o3_q2 = _select_3_options(q4)
+
+    return {
+        "pilot_id": pilot_id,
+        "Topic": topic,
+        "Video_URL": video_url or "https://youtu.be/placeholder",
+        "Video_Length_Sec": int(video_len),
+        "Pre_Q1": q1["question"],
+        "Pre_Opt1": pre_o1,
+        "Pre_Opt2": pre_o2,
+        "Pre_Opt3": pre_o3,
+        "Pre_A1": q1["correct_text"],
+        "Pre_Q2": q2["question"],
+        "Pre_Opt1_Q2": pre_o1_q2,
+        "Pre_Opt2_Q2": pre_o2_q2,
+        "Pre_Opt3_Q2": pre_o3_q2,
+        "Pre_A2": q2["correct_text"],
+        "Post_Q1": q3["question"],
+        "Post_Opt1": pst_o1,
+        "Post_Opt2": pst_o2,
+        "Post_Opt3": pst_o3,
+        "Post_A1": q3["correct_text"],
+        "Post_Q2": q4["question"],
+        "Post_Opt1_Q2": pst_o1_q2,
+        "Post_Opt2_Q2": pst_o2_q2,
+        "Post_Opt3_Q2": pst_o3_q2,
+        "Post_A2": q4["correct_text"],
+        "NPS_Question": "Would you recommend The Vault to a peer?",
+    }
+
+
+def generate_sql_insert_statement(row: dict) -> str:
+    """Builds an escaped, copyable SQL statement for the Supabase SQL editor."""
+    def esc(val):
+        if val is None:
+            return "NULL"
+        if isinstance(val, (int, float)):
+            return str(val)
+        return "'" + str(val).replace("'", "''") + "'"
+
+    cols = list(row.keys())
+    quoted_cols = [f'"{col}"' if col != "pilot_id" else col for col in cols]
+    vals = [esc(row[col]) for col in cols]
+
+    return f"""insert into "TheVault_CMS_Core" (
+  {', '.join(quoted_cols)}
+)
+values (
+  {', '.join(vals)}
+);"""
+
+
+# -----------------------------------------------------------------------------
+# MAIN APP INTERFACE
+# -----------------------------------------------------------------------------
+def main():
+    st.title("🎬 PRODUCTION ENGINE")
+    st.caption("Generate 90-Second Micro-Documentary Scripts & Calibrated Assessment Packages")
+
+    with st.sidebar:
+        st.header("⚙️ Production Controls")
+        target_pilot = st.text_input("Cohort / Pilot ID", value="WIRAPIDS_12")
+        topic_title = st.text_input("Curriculum Topic Title", value=active_topic_title)
+        target_duration = st.slider("Target Duration (sec)", min_value=60, max_value=120, value=85, step=5)
+        grade_level = st.selectbox(
+            "Cognitive Rigor Level",
+            ["High School Standard (12th Grade)", "AP / Introductory College", "Undergraduate Advanced"],
+            index=0,
         )
+        model_name = st.selectbox("Gemini Model", ["gemini-2.5-flash", "gemini-2.5-pro"], index=0)
 
-    with st.expander("Preview Normalized Payload (click to expand)", expanded=False):
-        st.text_area("Cached Payload:", payload, height=250, disabled=True)
-        st.markdown("👉 **Next Step:** Head to the **🧠 Narrative Orchestrator** to audition story concepts.")
+        st.divider()
+        if st.button("🧹 Flush Production Memory", use_container_width=True):
+            st.session_state.pop("prod_script", None)
+            st.session_state.pop("prod_mcqs", None)
+            st.session_state.pop("raw_production_output", None)
+            st.session_state.pop("last_generated_metaphor", None)
+            st.rerun()
 
+    # Context Review Expander
+    with st.expander("📑 Active Ingested Payload & Metaphor Pitch", expanded=not bool(st.session_state.get("prod_script"))):
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Source Curriculum Payload:**")
+            st.text_area(
+                "Payload View",
+                curriculum_context or "No payload found. Load text via Page 1 (Ingest).",
+                height=130,
+                disabled=True,
+            )
+        with c2:
+            st.markdown("**Selected Story Metaphor Pitch:**")
+            st.text_area(
+                "Metaphor View",
+                chosen_metaphor or "No metaphor selected. Choose one in Page 2 (Orchestrate).",
+                height=130,
+                disabled=True,
+            )
 
-def _extract_pdf_text(uploaded_file, start_page: int, end_page: int) -> str:
-    """Extract and combine text from a range of pages in an uploaded PDF."""
-    reader = pypdf.PdfReader(uploaded_file)
-    total_pages = len(reader.pages)
+    # Generation Button
+    if st.button("🚀 Generate Script & Calibrated Assessment", type="primary", use_container_width=True):
+        if not API_KEY:
+            st.error("❌ Gemini API Key not detected. Please configure GEMINI_API_KEY in your secrets.")
+            return
 
-    start_idx = max(0, start_page - 1)
-    end_idx = min(total_pages, end_page)
+        prompt = f"""
+You are the Lead Narrative Architect and Psychometrician for 'The Vault', an educational platform delivering 90-second micro-documentaries.
 
-    extracted_parts = []
-    for idx in range(start_idx, end_idx):
-        page = reader.pages[idx]
-        text = page.extract_text()
-        if text and text.strip():
-            extracted_parts.append(f"--- [Page {idx + 1}] ---\n{text.strip()}")
+CURRICULUM TOPIC: {topic_title}
+TARGET COHORT: {target_pilot} ({grade_level})
+TARGET LENGTH: ~{target_duration} seconds (approx. 210-230 spoken words)
+METAPHOR / STORY PREMISE: {chosen_metaphor or 'Relatable high-interest real world parallel'}
 
-    return "\n\n".join(extracted_parts)
+SOURCE CURRICULUM:
+{curriculum_context[:3000]}
 
+Generate the output with these EXACT section markers:
 
-def main() -> None:
-    st.title("📥 CURRICULUM INGESTOR")
-    st.subheader("Aggregate & Normalize Multi-Page Textbook Chapters & PDFs")
+=== SCRIPT MANIFEST ===
+Structure into 5 sequential timed scenes with visual cues [VISUAL] and voiceover script [VO]:
+- Scene 1 (00:00 - 00:15): The Hook & Setup
+- Scene 2 (00:15 - 00:35): The Core Concept in Action
+- Scene 3 (00:35 - 00:55): Tension & Alternative Choice
+- Scene 4 (00:55 - 01:15): Strategic Decision & Resolution
+- Scene 5 (01:15 - 01:25): Synthesis & Takeaway
 
-    ingestor = CurriculumIngestor()
+=== ASSESSMENT PACKAGE ===
+Provide exactly 4 multiple-choice questions (2 Pre-Video baseline, 2 Post-Video conceptual) formatted EXACTLY as follows:
 
-    tab_smart, tab_batch, tab_text, tab_pdf = st.tabs([
-        "🤖 Smart Crawl (Auto-Discover)",
-        "🌐 Manual Batch URLs",
-        "📝 Raw Text Input",
-        "📑 PDF Textbook Chapter",
-    ])
+2 Pre-Video Baseline Questions:
+Question: [Clear question stem testing prior baseline knowledge]?
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+Correct Answer: [A, B, C, or D]
+Explanation: [Rationale]
 
-    # Smart Crawl
-    with tab_smart:
-        st.markdown("### Smart Chapter Crawler")
-        seed_url = st.text_input(
-            "Paste any URL from the chapter:",
-            placeholder="https://openstax.org/books/principles-microeconomics-3e/pages/18-1-voter-participation",
-        )
+Question: [Second question stem testing foundational concept]?
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+Correct Answer: [A, B, C, or D]
+Explanation: [Rationale]
 
-        if st.button("🤖 Auto-Discover & Fetch Chapter", type="primary", key="btn_smart"):
-            if not seed_url.strip():
-                st.warning("⚠️ Please enter a URL.")
-            else:
-                with st.spinner("Scanning for related chapter sections…"):
-                    try:
-                        payload, discovered_urls = ingestor.smart_crawl(seed_url.strip())
-                        st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
-                        st.success(f"🎉 Smart crawl complete — {len(discovered_urls)} section(s) fetched!")
-                    except IngestionError as e:
-                        st.error(f"❌ Smart Crawl Error: {e}")
-                    except Exception as e:
-                        st.error(f"❌ Unexpected Error: {e}")
+2 Post-Video Conceptual Questions:
+Question: [Question testing understanding of the video's narrative/concept]?
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+Correct Answer: [A, B, C, or D]
+Explanation: [Rationale]
 
-    # Manual Batch
-    with tab_batch:
-        st.markdown("### Manual Batch URL Ingestion")
-        urls_input = st.text_area(
-            "URLs (one per line):",
-            height=150,
-            placeholder="https://openstax.org/...\nhttps://openstax.org/...",
-        )
-        if st.button("🚀 Fetch & Normalize Batch", type="primary", key="btn_batch"):
-            valid_urls = [u.strip() for u in urls_input.splitlines() if u.strip()]
-            if not valid_urls:
-                st.warning("⚠️ Please enter at least one valid URL.")
-            else:
-                with st.spinner(f"Fetching {len(valid_urls)} page(s)…"):
-                    try:
-                        payload = ingestor.fetch_batch_urls(valid_urls)
-                        st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
-                        st.success(f"🎉 {len(valid_urls)} page(s) fetched and aggregated!")
-                    except IngestionError as e:
-                        st.error(f"❌ Ingestion Error: {e}")
+Question: [Question testing practical real-world application of the lesson]?
+A) [Option A]
+B) [Option B]
+C) [Option C]
+D) [Option D]
+Correct Answer: [A, B, C, or D]
+Explanation: [Rationale]
+"""
+        with st.spinner("Generating 90s narrative manifest and 4 psychometric MCQs..."):
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(prompt)
+                full_output = response.text
 
-    # Raw Text
-    with tab_text:
-        st.markdown("### Direct Text Ingestion")
-        raw_text_input = st.text_area("Paste Curriculum Text:", height=250)
-        if st.button("⚙️ Process & Normalize Text", type="primary", key="btn_raw"):
-            if not raw_text_input.strip():
-                st.warning("⚠️ Please paste text into the box above.")
+                script_txt, mcq_txt = split_script_and_mcqs(full_output)
+                st.session_state["prod_script"] = script_txt
+                st.session_state["prod_mcqs"] = mcq_txt
+                st.session_state["prod_topic"] = topic_title
+                st.session_state["prod_pilot"] = target_pilot
+                st.session_state["last_generated_metaphor"] = chosen_metaphor
+
+            except Exception as e:
+                st.error(f"❌ Generation Error: {e}")
+
+    # -------------------------------------------------------------------------
+    # DISPLAY & EXPORT AREA
+    # -------------------------------------------------------------------------
+    if "prod_script" in st.session_state and "prod_mcqs" in st.session_state:
+        st.divider()
+        tab_script, tab_mcq, tab_export = st.tabs([
+            "📜 Script & Scene Manifest",
+            "🧠 Calibrated Assessment (4 MCQs)",
+            "🚀 Export to Supabase CMS",
+        ])
+
+        with tab_script:
+            st.markdown("### 🎬 90-Second Cinematic Scene Manifest")
+            st.markdown(st.session_state["prod_script"])
+
+        with tab_mcq:
+            st.markdown("### 📝 Active Retrieval Assessment Package")
+            edited_mcqs = st.text_area(
+                "MCQ Content (Editable)",
+                value=st.session_state["prod_mcqs"],
+                height=350,
+            )
+            st.session_state["prod_mcqs"] = edited_mcqs
+
+        with tab_export:
+            st.markdown("### 🗄️ Supabase CMS Exporter (`TheVault_CMS_Core`)")
+            st.caption("Auto-extracts options, verifies schema conformity, and prepares clean CSV/SQL.")
+
+            col_u, col_l = st.columns([3, 1])
+            with col_u:
+                video_url_input = st.text_input(
+                    "Video Watch URL:",
+                    value="https://youtu.be/placeholder",
+                )
+            with col_l:
+                vid_runtime = st.number_input(
+                    "Runtime (Seconds):",
+                    min_value=30,
+                    max_value=300,
+                    value=int(target_duration),
+                )
+
+            parsed_questions = parse_mcq_text(st.session_state["prod_mcqs"])
+
+            if len(parsed_questions) < 4:
+                st.warning(
+                    f"⚠️ The parser detected **{len(parsed_questions)} of 4** questions. "
+                    "Ensure all 4 questions end with a '?', list options A) through D), and state 'Correct Answer: [Letter]'."
+                )
+                with st.expander("Show Diagnostic Text"):
+                    st.text(st.session_state["prod_mcqs"])
             else:
                 try:
-                    payload = ingestor.normalize_text(raw_text_input)
-                    st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
-                    st.success("🎉 Text normalized and cached!")
-                except IngestionError as e:
-                    st.error(f"❌ Normalization Error: {e}")
+                    cms_row = build_cms_row(
+                        topic=st.session_state.get("prod_topic", topic_title),
+                        video_url=video_url_input,
+                        video_len=vid_runtime,
+                        pilot_id=st.session_state.get("prod_pilot", target_pilot),
+                        parsed_questions=parsed_questions,
+                    )
+                    df_export = pd.DataFrame([cms_row])
 
-    # PDF Ingestion with file size guard
-    with tab_pdf:
-        st.markdown("### PDF Textbook Ingestion")
-        pdf_file = st.file_uploader("Choose a PDF file", type=["pdf"], key="pdf_uploader")
+                    st.success(f"✅ Verified all 4 questions for cohort `{cms_row['pilot_id']}`!")
 
-        if pdf_file is not None:
-            file_size_mb = pdf_file.size / (1024 * 1024)
-            if file_size_mb > MAX_PDF_FILE_MB:
-                st.error(f"File exceeds maximum allowed size of {MAX_PDF_FILE_MB}MB.")
-            else:
-                try:
-                    temp_reader = pypdf.PdfReader(pdf_file)
-                    total_pages = len(temp_reader.pages)
-                    st.info(f"📑 PDF loaded: **{pdf_file.name}** ({total_pages} pages)")
+                    with st.expander("👀 Inspect Formatted Database Row", expanded=False):
+                        st.dataframe(df_export, use_container_width=True)
 
-                    col_start, col_end = st.columns(2)
-                    with col_start:
-                        start_page = st.number_input("Start Page:", min_value=1, max_value=total_pages, value=1)
-                    with col_end:
-                        end_page = st.number_input("End Page:", min_value=1, max_value=total_pages, value=min(20, total_pages))
+                    btn_c1, btn_c2 = st.columns(2)
+                    with btn_c1:
+                        csv_data = df_export.to_csv(index=False)
+                        filename = f"TheVault_CMS_{cms_row['pilot_id']}_{cms_row['Topic'][:20].replace(' ', '_')}.csv"
+                        st.download_button(
+                            label="📥 Download Clean CSV for Supabase",
+                            data=csv_data,
+                            file_name=filename,
+                            mime="text/csv",
+                            type="primary",
+                            use_container_width=True,
+                        )
 
-                    if st.button("📑 Extract & Normalize PDF Chapter", type="primary", key="btn_pdf"):
-                        if start_page > end_page:
-                            st.error("Start page cannot be greater than end page.")
-                        else:
-                            with st.spinner("Extracting pages…"):
-                                raw_pdf = _extract_pdf_text(pdf_file, int(start_page), int(end_page))
-                                if not raw_pdf.strip():
-                                    st.warning("⚠️ No readable text found in those pages.")
-                                else:
-                                    payload = ingestor.normalize_text(raw_pdf)
-                                    st.session_state[KEY_CURRICULUM_PAYLOAD] = payload
-                                    st.success(f"🎉 Extracted {end_page - start_page + 1} page(s) and normalized!")
+                    sql_statement = generate_sql_insert_statement(cms_row)
+                    with btn_c2:
+                        st.download_button(
+                            label="💾 Download SQL File (.sql)",
+                            data=sql_statement,
+                            file_name=f"insert_{cms_row['pilot_id']}.sql",
+                            mime="text/plain",
+                            use_container_width=True,
+                        )
+
+                    st.markdown("#### ⚡ Copy & Run SQL Directly in Supabase:")
+                    st.code(sql_statement, language="sql")
+
                 except Exception as e:
-                    st.error(f"Failed to read PDF file: {e}")
-
-    # Payload Preview
-    cached = st.session_state.get(KEY_CURRICULUM_PAYLOAD)
-    if cached:
-        _render_payload_preview(cached)
+                    st.error(f"❌ Schema alignment error: {e}")
 
 
 if __name__ == "__main__":
