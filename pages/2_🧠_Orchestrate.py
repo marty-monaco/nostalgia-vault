@@ -308,7 +308,7 @@ def main():
                 orchestrator = UniverseOrchestrator(api_key=api_key)
                 pitches = orchestrator.audition_metaphors(
                     raw_curriculum=raw_payload[:4000],
-                    preferred_domain=preferred_domain,
+                    domain_choice=preferred_domain,
                 )
                 st.session_state[KEY_ORCHESTRATOR_PITCHES] = pitches
                 st.session_state["orchestrator_instance"] = orchestrator
