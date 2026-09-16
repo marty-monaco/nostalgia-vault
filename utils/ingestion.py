@@ -127,7 +127,8 @@ class CurriculumIngestor:
 
         payload = self._aggregate(urls, label="OPENSTAX SECTION" if _is_openstax_url(seed_clean) else "CHAPTER SECTION")
         return payload, urls
-      def _method1_chapter_pattern(self, seed_url: str) -> list[str]:
+
+    def _method1_chapter_pattern(self, seed_url: str) -> list[str]:
         chapter = _extract_chapter_number(seed_url)
         base_path = _extract_base_path(seed_url)
         if not chapter or not base_path:
