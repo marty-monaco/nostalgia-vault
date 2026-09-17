@@ -15,8 +15,8 @@ from typing import Optional, Dict, Any
 # Ensure project root / Utils is resolvable
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from Utils.vault_curriculum_prompts import VaultModuleSchema
-from Utils.generate_and_ingest import generate_vault_module, ingest_module_to_supabase
+from utils.vault_curriculum_prompts import VaultModuleSchema
+from utils.generate_and_ingest import generate_vault_module, ingest_module_to_supabase
 
 logging.basicConfig(
     level=logging.INFO,
@@ -101,7 +101,7 @@ class VaultProductionPipeline:
                     "May induce ceiling effect."
                 )
 
-       # Confirm answer options match declared correct keys with case-insensitive fallback
+        # Confirm answer options match declared correct keys with case-insensitive fallback
         for q_name, q in [
             ("Pre_Q1", schema.pre_q1), ("Pre_Q2", schema.pre_q2),
             ("Post_Q1", schema.post_q1), ("Post_Q2", schema.post_q2)
