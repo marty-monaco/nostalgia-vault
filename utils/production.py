@@ -12,7 +12,7 @@ import logging
 import argparse
 from typing import Optional, Dict, Any
 
-# Ensure project root / Utils is resolvable
+# Ensure project root / utils is resolvable
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from utils.vault_curriculum_prompts import VaultModuleSchema
