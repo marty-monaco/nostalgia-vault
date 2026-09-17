@@ -11,18 +11,11 @@ from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
-try:
-    from Utils.vault_curriculum_prompts import (
-        SYSTEM_PSYCHOMETRIC_INSTRUCTIONS,
-        VaultModuleSchema,
-        build_module_prompt,
-    )
-except ImportError:
-    from vault_curriculum_prompts import (
-        SYSTEM_PSYCHOMETRIC_INSTRUCTIONS,
-        VaultModuleSchema,
-        build_module_prompt,
-    )
+from utils.vault_curriculum_prompts import (
+    SYSTEM_PSYCHOMETRIC_INSTRUCTIONS,
+    VaultModuleSchema,
+    build_module_prompt,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VaultIngestion")
