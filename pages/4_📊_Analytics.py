@@ -32,15 +32,18 @@ st.caption("Deep dive into engagement metrics, domains, and keywords across your
 
 
 # ============================================================================
-# HELPER: GET OR CREATE ORCHESTRATOR
+# HELPER: ANALYTICS-ONLY ORCHESTRATOR
 # ============================================================================
 def _get_orchestrator() -> UniverseOrchestrator:
-    """Get or create orchestrator instance for analytics."""
-    if "orchestrator_instance" not in st.session_state:
-        # Create a dummy orchestrator for analytics (no API calls needed)
-        # We'll use a placeholder API key since we're only doing analysis
-        st.session_state["orchestrator_instance"] = UniverseOrchestrator(api_key="dummy_for_analytics")
-    return st.session_state["orchestrator_instance"]
+    """
+    Return an analytics-only orchestrator (no API key, no Gemini client).
+
+    Every method this page calls is pure computation on pitch data, so no key
+    is needed. The instance is deliberately NOT stored in
+    st.session_state["orchestrator_instance"]: that key is shared with the
+    Orchestrate page, which needs a client-backed instance for refinement.
+    """
+    return UniverseOrchestrator()
 
 
 # ============================================================================
