@@ -5,12 +5,13 @@ calibrated 4-question retrieval assessments, and exports directly to
 TheVault_CMS_Core via clean CSV or copyable SQL INSERT statements.
 """
 
-import os
 import re
 import pandas as pd
 import streamlit as st
 import google.generativeai as genai
 from datetime import datetime
+
+from utils.config import resolve_gemini_key
 
 # -----------------------------------------------------------------------------
 # PAGE CONFIGURATION
@@ -25,7 +26,7 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 # GEMINI API CLIENT SETUP
 # -----------------------------------------------------------------------------
-API_KEY = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", None)
+API_KEY = resolve_gemini_key()
 
 if API_KEY:
     genai.configure(api_key=API_KEY)
