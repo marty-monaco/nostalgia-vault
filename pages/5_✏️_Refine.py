@@ -13,6 +13,7 @@ import streamlit as st
 # Ensure root directory is importable
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from utils.config import resolve_gemini_key
 from utils.constants import KEY_ORCHESTRATOR_PITCHES
 from utils.orchestrator import (
     UniverseOrchestrator,
@@ -46,25 +47,11 @@ if "refinement_history" not in st.session_state:
 
 
 # ============================================================================
-# API KEY RESOLUTION
-# ============================================================================
-def _resolve_gemini_key() -> str | None:
-    """Safely retrieves the Gemini API key from st.secrets or os.environ."""
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            return st.secrets["GEMINI_API_KEY"].strip()
-    except Exception:
-        pass
-    val = os.environ.get("GEMINI_API_KEY")
-    return val.strip() if val else None
-
-
-# ============================================================================
 # HELPER: GET OR CREATE ORCHESTRATOR
 # ============================================================================
 def _get_orchestrator() -> UniverseOrchestrator | None:
     """Get or create orchestrator instance."""
-    api_key = _resolve_gemini_key()
+    api_key = resolve_gemini_key()
     if not api_key:
         return None
     return UniverseOrchestrator(api_key=api_key)
@@ -98,7 +85,7 @@ def main():
         )
         return
     
-    api_key = _resolve_gemini_key()
+    api_key = resolve_gemini_key()
     orchestrator = _get_orchestrator()
     
     # ========================================================================
