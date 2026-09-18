@@ -17,6 +17,7 @@ import streamlit as st
 # Ensure root directory is importable
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from utils.config import resolve_gemini_key
 from utils.constants import (
     KEY_CURRICULUM_PAYLOAD,
     KEY_ORCHESTRATOR_PITCHES,
@@ -37,20 +38,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-
-# -----------------------------------------------------------------------------
-# API KEY RESOLUTION
-# -----------------------------------------------------------------------------
-def _resolve_gemini_key() -> str | None:
-    """Safely retrieves the Gemini API key from st.secrets or os.environ."""
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            return st.secrets["GEMINI_API_KEY"].strip()
-    except Exception:
-        pass
-    val = os.environ.get("GEMINI_API_KEY")
-    return val.strip() if val else None
 
 
 # ============================================================================
@@ -159,7 +146,7 @@ def _render_refinement_interface(orchestrator: UniverseOrchestrator, response: P
         key="refinement_feedback"
     )
     
-    api_key = _resolve_gemini_key()
+    api_key = resolve_gemini_key()
     refine_col1, refine_col2 = st.columns([3, 1])
     
     with refine_col1:
@@ -249,7 +236,7 @@ def main():
     st.title("🧠 NARRATIVE ORCHESTRATOR")
     st.caption("Translate Academic & Economic Models into Universal Story Metaphors")
 
-    api_key = _resolve_gemini_key()
+    api_key = resolve_gemini_key()
     raw_payload = st.session_state.get(KEY_CURRICULUM_PAYLOAD, "")
 
     # Sidebar Controls
