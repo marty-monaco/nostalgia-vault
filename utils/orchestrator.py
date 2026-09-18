@@ -169,12 +169,26 @@ REFINEMENT_TEMPLATE = (
 class UniverseOrchestrator:
     """Orchestrates structured conceptual auditions from curriculum text with extended analytics and refinement tools."""
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
-        if not api_key:
-            raise ValueError("An API key is required to initialize UniverseOrchestrator.")
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: Optional[str] = None, model: str = DEFAULT_MODEL):
+        """
+        api_key is optional. Without one the orchestrator runs in analytics-only
+        mode: ranking, comparison, keyword and export helpers all work, but any
+        method that calls Gemini (audition_*, refine_*) raises a clear ValueError
+        via the `client` property.
+        """
+        self._client = genai.Client(api_key=api_key) if api_key else None
         self.model = model
         self.last_response: Optional[PitchAuditionResponse] = None
+
+    @property
+    def client(self) -> "genai.Client":
+        """Gemini client. Raises if this instance was created without an API key."""
+        if self._client is None:
+            raise ValueError(
+                "An API key is required for Gemini calls (generation/refinement). "
+                "This UniverseOrchestrator was created without one (analytics-only mode)."
+            )
+        return self._client
 
     def audition_pitches(
         self,
@@ -235,10 +249,12 @@ class UniverseOrchestrator:
             response_schema=PitchAuditionResponse
         )
 
+        client = self.client  # fail fast on a missing key instead of retrying a config error
+
         last_error = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                response = self.client.models.generate_content(
+                response = client.models.generate_content(
                     model=self.model,
                     contents=prompt,
                     config=config
