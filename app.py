@@ -51,8 +51,3 @@ if st.session_state.get("curriculum_payload"):
     st.success("✅ Active Curriculum Payload loaded in memory.")
 else:
     st.info("ℹ️ No active payload detected. Start by visiting the **📥 Ingest** page.")
-from utils.constants import KEY_CURRICULUM_PAYLOAD, KEY_SELECTED_PITCH
-from utils.config import resolve_gemini_key, resolve_admin_password
-st.sidebar.write("Constants OK ✅")
-st.sidebar.write("Gemini key found:", bool(resolve_gemini_key()))
-st.sidebar.write("Admin password configured:", resolve_admin_password() != "__UNCONFIGURED__")
