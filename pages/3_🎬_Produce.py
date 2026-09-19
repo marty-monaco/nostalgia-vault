@@ -9,9 +9,19 @@ import re
 import pandas as pd
 import streamlit as st
 import google.generativeai as genai
-from datetime import datetime
 
 from utils.config import resolve_gemini_key
+from utils.constants import (
+    KEY_ACTIVE_TOPIC,
+    KEY_CURRICULUM_PAYLOAD,
+    KEY_LAST_GENERATED_METAPHOR,
+    KEY_PROD_MCQS,
+    KEY_PROD_PILOT,
+    KEY_PROD_SCRIPT,
+    KEY_PROD_TOPIC,
+    KEY_RAW_PRODUCTION_OUTPUT,
+    KEY_SELECTED_PITCH,
+)
 
 # -----------------------------------------------------------------------------
 # PAGE CONFIGURATION
@@ -33,34 +43,48 @@ if API_KEY:
 
 
 # -----------------------------------------------------------------------------
-# CACHE INVALIDATION & SESSION RESOLUTION
+# PIPELINE INPUTS (session state -> plain values; nothing runs at import time)
 # -----------------------------------------------------------------------------
-curriculum_context = (
-    st.session_state.get("active_curriculum_payload")
-    or st.session_state.get("curriculum_payload")
-    or ""
-)
+DEFAULT_TOPIC = "Incentives vs. Goals: The Rent Control Paradox"
 
-chosen_metaphor = (
-    st.session_state.get("selected_metaphor_pitch")
-    or st.session_state.get("selected_pitch")
-    or st.session_state.get("active_metaphor")
-    or ""
-)
 
-active_topic_title = (
-    st.session_state.get("active_topic")
-    or st.session_state.get("selected_topic")
-    or "Incentives vs. Goals: The Rent Control Paradox"
-)
+def _pitch_to_text(pitch) -> str:
+    """
+    Convert whatever Orchestrate stored under KEY_SELECTED_PITCH into text.
 
-# Invalidate cache if a new pitch arrived from Orchestrate
-last_used_pitch = st.session_state.get("last_generated_metaphor", None)
-if chosen_metaphor and last_used_pitch != chosen_metaphor:
-    st.session_state.pop("prod_script", None)
-    st.session_state.pop("prod_mcqs", None)
-    st.session_state.pop("raw_production_output", None)
-    st.session_state["last_generated_metaphor"] = chosen_metaphor
+    Orchestrate stores a StoryPitch object. Interpolating that directly into a
+    prompt or widget yields its repr (title='...' hook='...'), not a readable
+    pitch, so render the markdown card instead. Plain strings pass through.
+    """
+    if pitch is None:
+        return ""
+    if hasattr(pitch, "to_markdown_card"):
+        return pitch.to_markdown_card()
+    return str(pitch).strip()
+
+
+def _clear_production_outputs() -> None:
+    """Drop every generated artifact so stale output can never be exported."""
+    for key in (KEY_PROD_SCRIPT, KEY_PROD_MCQS, KEY_RAW_PRODUCTION_OUTPUT):
+        st.session_state.pop(key, None)
+
+
+def _load_pipeline_inputs() -> tuple[str, str, str]:
+    """
+    Read the Page 1 / Page 2 handoffs and return (curriculum, pitch_text, topic).
+
+    If the selected pitch differs from the one the current outputs were generated
+    from, the outputs are stale and are cleared. Called once at the top of main().
+    """
+    curriculum = st.session_state.get(KEY_CURRICULUM_PAYLOAD) or ""
+    pitch_text = _pitch_to_text(st.session_state.get(KEY_SELECTED_PITCH))
+    topic = st.session_state.get(KEY_ACTIVE_TOPIC) or DEFAULT_TOPIC
+
+    if pitch_text and st.session_state.get(KEY_LAST_GENERATED_METAPHOR) != pitch_text:
+        _clear_production_outputs()
+        st.session_state[KEY_LAST_GENERATED_METAPHOR] = pitch_text
+
+    return curriculum, pitch_text, topic
 
 
 # -----------------------------------------------------------------------------
@@ -232,10 +256,12 @@ def main():
     st.title("🎬 PRODUCTION ENGINE")
     st.caption("Generate 90-Second Micro-Documentary Scripts & Calibrated Assessment Packages")
 
+    curriculum_context, chosen_metaphor, default_topic = _load_pipeline_inputs()
+
     with st.sidebar:
         st.header("⚙️ Production Controls")
         target_pilot = st.text_input("Cohort / Pilot ID", value="WIRAPIDS_12")
-        topic_title = st.text_input("Curriculum Topic Title", value=active_topic_title)
+        topic_title = st.text_input("Curriculum Topic Title", value=default_topic)
         target_duration = st.slider("Target Duration (sec)", min_value=60, max_value=120, value=85, step=5)
         grade_level = st.selectbox(
             "Cognitive Rigor Level",
@@ -246,14 +272,12 @@ def main():
 
         st.divider()
         if st.button("🧹 Flush Production Memory", use_container_width=True):
-            st.session_state.pop("prod_script", None)
-            st.session_state.pop("prod_mcqs", None)
-            st.session_state.pop("raw_production_output", None)
-            st.session_state.pop("last_generated_metaphor", None)
+            _clear_production_outputs()
+            st.session_state.pop(KEY_LAST_GENERATED_METAPHOR, None)
             st.rerun()
 
     # Context Review Expander
-    with st.expander("📑 Active Ingested Payload & Metaphor Pitch", expanded=not bool(st.session_state.get("prod_script"))):
+    with st.expander("📑 Active Ingested Payload & Metaphor Pitch", expanded=not bool(st.session_state.get(KEY_PROD_SCRIPT))):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Source Curriculum Payload:**")
@@ -343,11 +367,11 @@ Explanation: [Rationale]
                 full_output = response.text
 
                 script_txt, mcq_txt = split_script_and_mcqs(full_output)
-                st.session_state["prod_script"] = script_txt
-                st.session_state["prod_mcqs"] = mcq_txt
-                st.session_state["prod_topic"] = topic_title
-                st.session_state["prod_pilot"] = target_pilot
-                st.session_state["last_generated_metaphor"] = chosen_metaphor
+                st.session_state[KEY_PROD_SCRIPT] = script_txt
+                st.session_state[KEY_PROD_MCQS] = mcq_txt
+                st.session_state[KEY_PROD_TOPIC] = topic_title
+                st.session_state[KEY_PROD_PILOT] = target_pilot
+                st.session_state[KEY_LAST_GENERATED_METAPHOR] = chosen_metaphor
 
             except Exception as e:
                 st.error(f"❌ Generation Error: {e}")
@@ -355,7 +379,7 @@ Explanation: [Rationale]
     # -------------------------------------------------------------------------
     # DISPLAY & EXPORT AREA
     # -------------------------------------------------------------------------
-    if "prod_script" in st.session_state and "prod_mcqs" in st.session_state:
+    if KEY_PROD_SCRIPT in st.session_state and KEY_PROD_MCQS in st.session_state:
         st.divider()
         tab_script, tab_mcq, tab_export = st.tabs([
             "📜 Script & Scene Manifest",
@@ -365,16 +389,16 @@ Explanation: [Rationale]
 
         with tab_script:
             st.markdown("### 🎬 90-Second Cinematic Scene Manifest")
-            st.markdown(st.session_state["prod_script"])
+            st.markdown(st.session_state[KEY_PROD_SCRIPT])
 
         with tab_mcq:
             st.markdown("### 📝 Active Retrieval Assessment Package")
             edited_mcqs = st.text_area(
                 "MCQ Content (Editable)",
-                value=st.session_state["prod_mcqs"],
+                value=st.session_state[KEY_PROD_MCQS],
                 height=350,
             )
-            st.session_state["prod_mcqs"] = edited_mcqs
+            st.session_state[KEY_PROD_MCQS] = edited_mcqs
 
         with tab_export:
             st.markdown("### 🗄️ Supabase CMS Exporter (`TheVault_CMS_Core`)")
@@ -394,7 +418,7 @@ Explanation: [Rationale]
                     value=int(target_duration),
                 )
 
-            parsed_questions = parse_mcq_text(st.session_state["prod_mcqs"])
+            parsed_questions = parse_mcq_text(st.session_state[KEY_PROD_MCQS])
 
             if len(parsed_questions) < 4:
                 st.warning(
@@ -402,14 +426,14 @@ Explanation: [Rationale]
                     "Ensure all 4 questions end with a '?', list options A) through D), and state 'Correct Answer: [Letter]'."
                 )
                 with st.expander("Show Diagnostic Text"):
-                    st.text(st.session_state["prod_mcqs"])
+                    st.text(st.session_state[KEY_PROD_MCQS])
             else:
                 try:
                     cms_row = build_cms_row(
-                        topic=st.session_state.get("prod_topic", topic_title),
+                        topic=st.session_state.get(KEY_PROD_TOPIC, topic_title),
                         video_url=video_url_input,
                         video_len=vid_runtime,
-                        pilot_id=st.session_state.get("prod_pilot", target_pilot),
+                        pilot_id=st.session_state.get(KEY_PROD_PILOT, target_pilot),
                         parsed_questions=parsed_questions,
                     )
                     df_export = pd.DataFrame([cms_row])
