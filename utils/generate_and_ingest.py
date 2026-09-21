@@ -1,53 +1,39 @@
 """
-Utils/generate_and_ingest.py
+utils/generate_and_ingest.py
 
-Executes curriculum generation via Gemini and automates schema-validated
-ingestion directly into Supabase (TheVault_CMS_Core).
+Curriculum generation via Gemini and schema-validated ingestion into Supabase
+(TheVault_CMS_Core).
+
+Library module: no CLI entry point and no import-time side effects. Whoever
+imports it (a Streamlit page, a notebook) decides how logging is configured.
+Credentials come from utils.config; the row schema comes from utils.export_helpers.
 """
-import os
-import sys
 import logging
+
 from google import genai
 from google.genai import types
 from supabase import create_client, Client
 
+from utils.config import resolve_gemini_key, resolve_supabase_credentials
+from utils.export_helpers import CMS_TABLE, validate_cms_row
 from utils.vault_curriculum_prompts import (
     SYSTEM_PSYCHOMETRIC_INSTRUCTIONS,
     VaultModuleSchema,
     build_module_prompt,
 )
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VaultIngestion")
 
 
-def _resolve_secret(key_name: str, nested_section: str = None) -> str | None:
-    """Safely retrieves credentials from st.secrets or os.environ."""
-    try:
-        import streamlit as st
-        if nested_section and nested_section in st.secrets:
-            val = st.secrets[nested_section].get(key_name)
-            if val:
-                return str(val).strip()
-        val = st.secrets.get(key_name)
-        if val:
-            return str(val).strip()
-    except Exception:
-        pass
-    val = os.environ.get(key_name)
-    return str(val).strip() if val else None
-
-
 def get_supabase_client() -> Client:
-    url = _resolve_secret("SUPABASE_URL", "supabase")
-    key = _resolve_secret("SUPABASE_KEY", "supabase")
+    url, key = resolve_supabase_credentials()
     if not url or not key:
         raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY in secrets/environment.")
     return create_client(url, key)
 
 
 def get_gemini_client() -> genai.Client:
-    api_key = _resolve_secret("GEMINI_API_KEY")
+    api_key = resolve_gemini_key()
     if not api_key:
         raise ValueError("Missing GEMINI_API_KEY in secrets/environment.")
     return genai.Client(api_key=api_key)
@@ -78,11 +64,11 @@ def generate_vault_module(topic: str, pilot_id: str, learning_objective: str) ->
     return response.parsed
 
 
-def ingest_module_to_supabase(module: VaultModuleSchema, pilot_id: str, video_url: str = "") -> dict:
-    """Maps validated schema to TheVault_CMS_Core column structure."""
+def ingest_module_to_supabase(module: VaultModuleSchema, pilot_id: str, video_url: str = "") -> list[dict]:
+    """Maps the validated schema to TheVault_CMS_Core and upserts it (returns the stored rows)."""
     clean_topic = module.topic.strip()
     clean_pilot = pilot_id.strip()
-    logger.info("Persisting '%s' to TheVault_CMS_Core...", clean_topic)
+    logger.info("Persisting '%s' to %s...", clean_topic, CMS_TABLE)
 
     payload = {
         "pilot_id": clean_pilot,
@@ -112,7 +98,10 @@ def ingest_module_to_supabase(module: VaultModuleSchema, pilot_id: str, video_ur
         "NPS_Question": "Would you recommend The Vault to a peer?",
     }
 
+    # Same schema gate the Produce page uses: exact column set, cleaned values.
+    payload = validate_cms_row(payload)
+
     supabase = get_supabase_client()
-    res = supabase.table("TheVault_CMS_Core").upsert(payload, on_conflict="pilot_id,Topic").execute()
+    res = supabase.table(CMS_TABLE).upsert(payload, on_conflict="pilot_id,Topic").execute()
     logger.info("Successfully upserted '%s' into Supabase.", clean_topic)
     return res.data
