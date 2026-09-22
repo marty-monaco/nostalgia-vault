@@ -22,6 +22,7 @@ from utils.constants import (
     KEY_CURRICULUM_PAYLOAD,
     KEY_ORCHESTRATOR_PITCHES,
 )
+from utils.drafts import format_draft_age, load_draft, save_draft
 from utils.orchestrator import (
     UniverseOrchestrator,
     PitchAuditionResponse,
@@ -181,7 +182,12 @@ def _render_refinement_interface(orchestrator: UniverseOrchestrator, response: P
 # ============================================================================
 # ORIGINAL: PITCH DISPLAY & ROUTING
 # ============================================================================
-def _render_pitch_cards(orchestrator: UniverseOrchestrator, response: PitchAuditionResponse, topic_title: str) -> None:
+def _render_pitch_cards(
+    orchestrator: UniverseOrchestrator,
+    response: PitchAuditionResponse,
+    topic_title: str,
+    pilot_id: str,
+) -> None:
     """Renders interactive audition cards and routes the selected pitch to Page 3."""
     st.markdown("### 🎭 Audition Narrative Pitches")
     st.caption("Select a metaphor blueprint below to route it directly into the Production Engine.")
@@ -218,6 +224,9 @@ def _render_pitch_cards(orchestrator: UniverseOrchestrator, response: PitchAudit
                     st.session_state.pop("prod_mcqs", None)
                     st.session_state.pop("raw_production_output", None)
                     st.session_state.pop("last_generated_metaphor", None)
+
+                    # 3. Persist the choice so Produce can resume it even if this session is lost
+                    save_draft(pilot_id, topic_title, selected_pitch_json=pitch.model_dump(mode="json"))
 
                     st.success(
                         f"✅ '{clean_title}' locked in! Open **3_🎬_Produce** in the sidebar to generate the script."
@@ -270,6 +279,30 @@ def main():
             st.session_state.pop("selected_pitch", None)
             st.rerun()
 
+    # ---------------------------------------------------------------------
+    # RESUME A SAVED DRAFT
+    # Only offered when this session has no pitches yet, so a fresh
+    # "Brainstorm" click is never silently overwritten by an old draft.
+    # ---------------------------------------------------------------------
+    if not st.session_state.get(KEY_ORCHESTRATOR_PITCHES):
+        draft = load_draft(cohort_id, target_topic)
+        if draft and draft.get("pitches_json"):
+            st.info(
+                f"📂 Found a saved draft for **{cohort_id} / {target_topic}** "
+                f"from {format_draft_age(draft)}."
+            )
+            if st.button("↩️ Resume This Draft", use_container_width=True):
+                try:
+                    st.session_state[KEY_ORCHESTRATOR_PITCHES] = PitchAuditionResponse.model_validate_json(
+                        draft["pitches_json"]
+                    )
+                    if draft.get("curriculum_payload"):
+                        st.session_state[KEY_CURRICULUM_PAYLOAD] = draft["curriculum_payload"]
+                    st.success("✅ Draft restored.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Could not restore draft: {e}")
+
     # Ingested Payload Review
     with st.expander("📑 View Ingested Curriculum Payload", expanded=not bool(raw_payload)):
         curriculum_input = st.text_area(
@@ -301,6 +334,12 @@ def main():
                 )
                 st.session_state[KEY_ORCHESTRATOR_PITCHES] = pitches
                 st.session_state["orchestrator_instance"] = orchestrator
+                save_draft(
+                    cohort_id,
+                    target_topic,
+                    curriculum_payload=raw_payload,
+                    pitches_json=pitches.model_dump(mode="json"),
+                )
             except Exception as e:
                 st.error(f"❌ Orchestration Error: {e}")
 
@@ -326,7 +365,7 @@ def main():
         ])
         
         with tab_pitches:
-            _render_pitch_cards(orchestrator, cached_response, target_topic)
+            _render_pitch_cards(orchestrator, cached_response, target_topic, cohort_id)
         
         with tab_analytics:
             _render_engagement_rankings(orchestrator, cached_response)
