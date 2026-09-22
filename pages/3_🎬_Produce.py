@@ -11,6 +11,7 @@ import streamlit as st
 import google.generativeai as genai
 
 from utils.config import resolve_gemini_key
+from utils.drafts import format_draft_age, load_draft, save_draft
 from utils.export_helpers import (
     build_cms_row,
     generate_sql_insert_statement,
@@ -148,6 +149,23 @@ def main():
             st.session_state.pop(KEY_LAST_GENERATED_METAPHOR, None)
             st.rerun()
 
+    # ---------------------------------------------------------------------
+    # RESUME A SAVED DRAFT
+    # Only offered when this session has no script yet, so a fresh
+    # "Generate" click is never silently overwritten by an old draft.
+    # ---------------------------------------------------------------------
+    if not st.session_state.get(KEY_PROD_SCRIPT):
+        draft = load_draft(target_pilot, topic_title)
+        if draft and draft.get("prod_script"):
+            st.info(f"📂 Found a saved script for **{target_pilot} / {topic_title}** from {format_draft_age(draft)}.")
+            if st.button("↩️ Resume This Draft", use_container_width=True):
+                st.session_state[KEY_PROD_SCRIPT] = draft["prod_script"]
+                st.session_state[KEY_PROD_MCQS] = draft.get("prod_mcqs", "")
+                st.session_state[KEY_PROD_TOPIC] = topic_title
+                st.session_state[KEY_PROD_PILOT] = target_pilot
+                st.success("✅ Draft restored.")
+                st.rerun()
+
     # Context Review Expander
     with st.expander("📑 Active Ingested Payload & Metaphor Pitch", expanded=not bool(st.session_state.get(KEY_PROD_SCRIPT))):
         c1, c2 = st.columns(2)
@@ -244,6 +262,8 @@ Explanation: [Rationale]
                 st.session_state[KEY_PROD_TOPIC] = topic_title
                 st.session_state[KEY_PROD_PILOT] = target_pilot
                 st.session_state[KEY_LAST_GENERATED_METAPHOR] = chosen_metaphor
+
+                save_draft(target_pilot, topic_title, prod_script=script_txt, prod_mcqs=mcq_txt)
 
             except Exception as e:
                 st.error(f"❌ Generation Error: {e}")
