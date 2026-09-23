@@ -10,6 +10,7 @@ Extended with helper methods for pitch analysis, comparison, refinement, and met
 import time
 import logging
 import json
+import random
 import re
 from typing import Optional, List, Dict, Any, Tuple
 from pydantic import BaseModel, Field
@@ -28,6 +29,43 @@ RETRY_DELAY_SEC     = 2.0
 DEFAULT_DOMAIN      = "Any / Multi-Domain (Default)"
 
 DIRECT_NARRATIVE_OPTION = "Direct Narrative / Source-Faithful (Literal Storyboard for YouTube Shorts, No Metaphors)"
+
+# ===========================================================================
+# DOMAIN TAXONOMY
+# Single source of truth for every metaphor domain. The UI selectbox
+# (2_Orchestrate.py) builds its options from get_domain_choices() instead of
+# a hand-copied list, so the two can never drift apart again -- this file
+# previously defined 14 domains here but the page only offered 8 of them.
+# tier "gen_z" / "classic" controls both the system-prompt framing (Gen Z
+# domains are "strongly preferred") and menu ordering.
+# ===========================================================================
+DOMAIN_TAXONOMY: List[Tuple[str, str, str]] = [
+    ("Gaming & Esports", "resource management, skill trees, in-game economies, battle pass mechanics", "gen_z"),
+    ("Pop Culture & Celebrity Economy", "music chart dynamics, streaming royalties, viral fame cycles", "gen_z"),
+    ("Social Media & Creator Economy", "algorithm dynamics, follower growth curves, monetization thresholds", "gen_z"),
+    ("Sneaker & Streetwear Culture", "limited drops, resale market economics, hype cycles, brand scarcity tactics", "gen_z"),
+    ("Film, TV & Streaming Industry", "budget allocation, box office risk, streaming vs. theatrical economics", "gen_z"),
+    ("Fashion & Trend Economics", "fast fashion vs. luxury positioning, seasonal cycles, trend diffusion", "gen_z"),
+    ("Space Exploration & Sci-Fi", "mission resource constraints, colony economics, interplanetary trade", "gen_z"),
+    ("Sports, Athletics & Pro Leagues", "salary caps, draft picks, trade deadlines, Moneyball analytics", "classic"),
+    ("Food, Restaurant & Kitchen Dynamics", "kitchen operations, franchise vs. independent economics", "classic"),
+    ("History & High-Stakes Moments", "gold rushes, trade route battles, heists, revolutions", "classic"),
+    ("Natural Systems & Ecology", "forest mycelium networks, predator/prey dynamics, ecosystem balance", "classic"),
+    ("Real-World Logistics & Transport", "airports, shipping lanes, last-mile delivery, supply chains", "classic"),
+    ("Urban Planning & City Economics", "gentrification dynamics, housing market trade-offs, zoning", "classic"),
+    ("Performing Arts & Live Events", "concert tour economics, ticket scalping, festival logistics", "classic"),
+]
+DOMAIN_NAMES: List[str] = [name for name, _, _ in DOMAIN_TAXONOMY]
+_DOMAIN_DESCRIPTIONS: Dict[str, str] = {name: desc for name, desc, _ in DOMAIN_TAXONOMY}
+
+
+def get_domain_choices() -> List[str]:
+    """
+    Full, canonical list of selectable domains: the two special modes first,
+    then all 14 taxonomy domains in stable order. Pages should build their
+    domain selectbox from this instead of hardcoding a subset.
+    """
+    return [DEFAULT_DOMAIN, DIRECT_NARRATIVE_OPTION, *DOMAIN_NAMES]
 
 # ===========================================================================
 # PYDANTIC STRUCTURED OUTPUT CONTRACTS
@@ -101,35 +139,69 @@ class PitchAuditionResponse(BaseModel):
 # ===========================================================================
 # SYSTEM INSTRUCTIONS & TEMPLATES
 # ===========================================================================
-SYSTEM_INSTRUCTION_METAPHOR = (
+_CREATIVE_DIRECTOR_PREAMBLE = (
     "You are an elite Creative Director, Narrative Designer, and Instructional Expert "
     "who specializes in reaching Gen Z students who have grown up on TikTok, YouTube, "
     "gaming, and streaming culture. Your superpower is transforming complex, high-density "
     "curriculum mechanics into high-engagement metaphors that feel NATIVE to the world "
     "students actually live in — not the world textbooks assume they live in.\n\n"
     "TONE DIRECTIVE: Scripts must feel cinematic, fun, and culturally alive. Avoid corporate "
-    "or academic framing. The best metaphors make students feel like insiders, not students.\n\n"
-    "STRICT DOMAIN DIVERSITY RULE: You MUST draw your 3 story concepts from THREE (3) COMPLETELY "
-    "DIFFERENT domain categories below. Never repeat a genre. Strongly prefer the Gen Z-native "
-    "domains (1-7) unless the curriculum topic maps exceptionally well to a classic domain (8-14). "
-    "Choose from:\n"
-    "\n--- GEN Z NATIVE DOMAINS (strongly preferred) ---\n"
-    "1. Gaming & Esports (resource management, skill trees, in-game economies, battle pass mechanics)\n"
-    "2. Pop Culture & Celebrity Economy (music chart dynamics, streaming royalties, viral fame cycles)\n"
-    "3. Social Media & Creator Economy (algorithm dynamics, follower growth curves, monetization thresholds)\n"
-    "4. Sneaker & Streetwear Culture (limited drops, resale market economics, hype cycles, brand scarcity tactics)\n"
-    "5. Film, TV & Streaming Industry (budget allocation, box office risk, streaming vs. theatrical economics)\n"
-    "6. Fashion & Trend Economics (fast fashion vs. luxury positioning, seasonal cycles, trend diffusion)\n"
-    "7. Space Exploration & Sci-Fi (mission resource constraints, colony economics, interplanetary trade)\n"
-    "\n--- CLASSIC DOMAINS (use when a strong match exists) ---\n"
-    "8. Sports, Athletics & Pro Leagues (salary caps, draft picks, trade deadlines, Moneyball analytics)\n"
-    "9. Food, Restaurant & Kitchen Dynamics (kitchen operations, franchise vs. independent economics)\n"
-    "10. History & High-Stakes Moments (gold rushes, trade route battles, heists, revolutions)\n"
-    "11. Natural Systems & Ecology (forest mycelium networks, predator/prey dynamics, ecosystem balance)\n"
-    "12. Real-World Logistics & Transport (airports, shipping lanes, last-mile delivery, supply chains)\n"
-    "13. Urban Planning & City Economics (gentrification dynamics, housing market trade-offs, zoning)\n"
-    "14. Performing Arts & Live Events (concert tour economics, ticket scalping, festival logistics)"
+    "or academic framing. The best metaphors make students feel like insiders, not students."
 )
+
+
+def _domain_menu(rng: random.Random) -> str:
+    """
+    Render the taxonomy as a numbered menu, Gen-Z domains first then classic,
+    each tier internally shuffled. A model reliably anchors on whatever is
+    listed first in a numbered menu; presenting the same fixed 1-14 order on
+    every call is what made generation converge on the same 2-3 domains
+    (Gaming, Pop Culture, Social Media) regardless of curriculum content.
+    Randomizing the order each call removes that anchor.
+    """
+    gen_z = [d for d in DOMAIN_TAXONOMY if d[2] == "gen_z"]
+    classic = [d for d in DOMAIN_TAXONOMY if d[2] == "classic"]
+    rng.shuffle(gen_z)
+    rng.shuffle(classic)
+    lines = ["--- GEN Z NATIVE DOMAINS (strongly preferred) ---"]
+    lines += [f"{i}. {name} ({desc})" for i, (name, desc, _) in enumerate(gen_z, start=1)]
+    lines.append("--- CLASSIC DOMAINS (use when a strong match exists) ---")
+    lines += [f"{i}. {name} ({desc})" for i, (name, desc, _) in enumerate(classic, start=len(gen_z) + 1)]
+    return "\n".join(lines)
+
+
+def _system_instruction_diverse(rng: random.Random) -> str:
+    """Auto/multi-domain mode: 3 pitches, 3 different domains, menu order randomized per call."""
+    return (
+        f"{_CREATIVE_DIRECTOR_PREAMBLE}\n\n"
+        "STRICT DOMAIN DIVERSITY RULE: You MUST draw your 3 story concepts from THREE (3) COMPLETELY "
+        "DIFFERENT domain categories below. Never repeat a genre. Strongly prefer the Gen Z-native "
+        "domains unless the curriculum topic maps exceptionally well to a classic domain. The menu "
+        "below is in a randomized order this run — do not treat earlier-listed items as more suitable "
+        "just because they appear first; judge fit on the curriculum content alone.\n\nChoose from:\n\n"
+        f"{_domain_menu(rng)}"
+    )
+
+
+def _system_instruction_forced(domain: str) -> str:
+    """
+    Single-domain mode: the user explicitly chose one domain, so all 3
+    pitches must come from it. Previously, an explicit domain_choice only
+    "prioritized" one pitch while the diversity rule above still forced the
+    other two into different domains — the steering control never actually
+    steered all three.
+    """
+    description = _DOMAIN_DESCRIPTIONS.get(domain, "")
+    flavor = f" ({description})" if description else ""
+    return (
+        f"{_CREATIVE_DIRECTOR_PREAMBLE}\n\n"
+        f"STRICT SINGLE-DOMAIN RULE: The user has explicitly locked in ONE domain: "
+        f"{domain}{flavor}. ALL THREE story concepts MUST be drawn from this SAME domain. "
+        "Do not substitute, blend in, or drift toward a different domain for any of the three. "
+        "Differentiate the three concepts through different hooks, different underlying mechanics "
+        "mapped from the curriculum, and different narrative angles WITHIN this one domain — never "
+        "by reaching for a second or third domain."
+    )
 
 SYSTEM_INSTRUCTION_DIRECT = (
     "You are an expert YouTube Shorts director, documentary producer, and visual storyboard artist. "
@@ -231,12 +303,34 @@ class UniverseOrchestrator:
                 curriculum_text=text,
                 domain_instruction=domain_instruction
             )
+        elif domain and domain != DEFAULT_DOMAIN and domain in DOMAIN_NAMES:
+            # A specific domain was explicitly chosen: force all 3 pitches into it.
+            system_instruction = _system_instruction_forced(domain)
+            domain_instruction = (
+                f"All three pitches MUST be drawn from the '{domain}' domain specifically — "
+                "vary the hook and story angle, not the domain."
+            )
+            prompt = AUDITION_METAPHOR_TEMPLATE.format(
+                curriculum_text=text,
+                domain_instruction=domain_instruction
+            )
         else:
-            system_instruction = SYSTEM_INSTRUCTION_METAPHOR
-            if domain == DEFAULT_DOMAIN:
-                domain_instruction = "Draw from 3 completely different domains with preference for Gen Z native categories."
+            # DEFAULT_DOMAIN, blank, or an unrecognized string: diverse auto mode.
+            system_instruction = _system_instruction_diverse(random.Random())
+            if domain and domain != DEFAULT_DOMAIN:
+                logger.warning(
+                    "audition_pitches: domain_choice %r not in the known taxonomy; "
+                    "falling back to diverse auto mode instead of forcing it.", domain
+                )
+                domain_instruction = (
+                    f"Prioritize concepts aligned with or inspired by: {domain}, "
+                    "but still draw the 3 pitches from 3 different domains overall."
+                )
             else:
-                domain_instruction = f"Prioritize concepts aligned with or inspired by: {domain}."
+                domain_instruction = (
+                    "Draw from 3 completely different domains with preference for "
+                    "Gen Z native categories. Menu order is randomized this run."
+                )
             prompt = AUDITION_METAPHOR_TEMPLATE.format(
                 curriculum_text=text,
                 domain_instruction=domain_instruction
