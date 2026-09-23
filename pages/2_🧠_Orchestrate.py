@@ -10,12 +10,7 @@ NEW FEATURES:
 - Refinement interface for iterative pitch improvement
 """
 
-import os
-import sys
 import streamlit as st
-
-# Ensure root directory is importable
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.config import resolve_gemini_key
 from utils.constants import (
@@ -26,8 +21,7 @@ from utils.drafts import format_draft_age, load_draft, save_draft
 from utils.orchestrator import (
     UniverseOrchestrator,
     PitchAuditionResponse,
-    DEFAULT_DOMAIN,
-    DIRECT_NARRATIVE_OPTION,
+    get_domain_choices,
 )
 
 # -----------------------------------------------------------------------------
@@ -257,19 +251,13 @@ def main():
         )
         preferred_domain = st.selectbox(
             "Steer Primary Metaphor Domain",
-            [
-                DEFAULT_DOMAIN,
-                DIRECT_NARRATIVE_OPTION,
-                "Gaming & Esports",
-                "Social Media & Creator Economy",
-                "Sneaker & Streetwear Culture",
-                "Pop Culture & Celebrity Economy",
-                "History & High-Stakes Moments",
-                "Film, TV & Streaming Industry",
-                "Fashion & Trend Economics",
-                "Sports, Athletics & Pro Leagues",
-            ],
+            get_domain_choices(),
             index=0,
+            help=(
+                "Choosing a specific domain forces all 3 pitches into that one domain, "
+                "varied by hook and story angle. Leave on the default to let Gemini pick "
+                "3 different domains itself."
+            ),
         )
 
         st.divider()
