@@ -10,6 +10,9 @@ NEW FEATURES:
 - Refinement interface for iterative pitch improvement
 """
 
+import hashlib
+import re
+
 import streamlit as st
 
 from utils.config import resolve_gemini_key
@@ -33,6 +36,33 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+# ============================================================================
+# TOPIC SUGGESTION
+# ============================================================================
+_PDF_PAGE_MARKER = re.compile(r"^-{2,}\s*\[Page \d+\]\s*-{2,}$")
+
+
+def _suggest_topic_from_payload(payload: str, max_words: int = 15, max_chars: int = 100) -> str:
+    """
+    Best-effort guess at a chapter/topic title from the raw ingested text —
+    an editable STARTING POINT for the Curriculum Topic field, never
+    authoritative. Skips the "--- [Page N] ---" markers 1_Ingest.py's PDF
+    extractor inserts, and skips lines that read as nav cruft (too short) or
+    body prose (too long) rather than a title. Returns "" if nothing in the
+    payload looks title-shaped, rather than guessing with a full paragraph.
+    """
+    if not payload:
+        return ""
+    for line in payload.splitlines():
+        line = line.strip()
+        if not line or _PDF_PAGE_MARKER.match(line):
+            continue
+        word_count = len(line.split())
+        if 2 <= word_count <= max_words:
+            return line[:max_chars].rstrip()
+    return ""
 
 
 # ============================================================================
@@ -242,12 +272,29 @@ def main():
     api_key = resolve_gemini_key()
     raw_payload = st.session_state.get(KEY_CURRICULUM_PAYLOAD, "")
 
+    # A text_input's `value=` only sets its FIRST render in a session; after
+    # that, Streamlit keeps whatever the user typed regardless of what value=
+    # says on later reruns, unless the widget's key also changes. Fingerprint
+    # the key to the ingested payload so the suggested topic actually refreshes
+    # when a new chapter is ingested, while still leaving in-progress edits
+    # alone as long as the same chapter is still loaded.
+    payload_fingerprint = hashlib.md5(raw_payload.encode("utf-8")).hexdigest()[:8] if raw_payload else "none"
+    suggested_topic = _suggest_topic_from_payload(raw_payload)
+
     # Sidebar Controls
     with st.sidebar:
         st.header("⚙️ Orchestrator Controls")
         cohort_id = st.text_input("Cohort / Pilot ID", value="WIRAPIDS_12")
         target_topic = st.text_input(
-            "Curriculum Topic", value="Incentives vs. Goals: Price Controls"
+            "Curriculum Topic",
+            value=suggested_topic,
+            key=f"target_topic_{payload_fingerprint}",
+            placeholder="e.g. Incentives vs. Goals: Price Controls",
+            help=(
+                "Auto-suggested from the ingested text on Page 1 when a new "
+                "chapter is loaded. Always editable — the suggestion is a "
+                "starting point, not a requirement."
+            ),
         )
         preferred_domain = st.selectbox(
             "Steer Primary Metaphor Domain",
