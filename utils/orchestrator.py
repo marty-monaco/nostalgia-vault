@@ -150,35 +150,56 @@ _CREATIVE_DIRECTOR_PREAMBLE = (
 )
 
 
-def _domain_menu(rng: random.Random) -> str:
+def _weighted_sample_without_replacement(
+    items: List[Tuple[str, str, str]], weights: List[float], k: int, rng: random.Random
+) -> List[Tuple[str, str, str]]:
     """
-    Render the taxonomy as a numbered menu, Gen-Z domains first then classic,
-    each tier internally shuffled. A model reliably anchors on whatever is
-    listed first in a numbered menu; presenting the same fixed 1-14 order on
-    every call is what made generation converge on the same 2-3 domains
-    (Gaming, Pop Culture, Social Media) regardless of curriculum content.
-    Randomizing the order each call removes that anchor.
+    Efraimidis-Spirakis weighted reservoir sampling: pick k items without
+    replacement, each item's odds of inclusion proportional to its weight.
     """
-    gen_z = [d for d in DOMAIN_TAXONOMY if d[2] == "gen_z"]
-    classic = [d for d in DOMAIN_TAXONOMY if d[2] == "classic"]
-    rng.shuffle(gen_z)
-    rng.shuffle(classic)
-    lines = ["--- GEN Z NATIVE DOMAINS (strongly preferred) ---"]
-    lines += [f"{i}. {name} ({desc})" for i, (name, desc, _) in enumerate(gen_z, start=1)]
-    lines.append("--- CLASSIC DOMAINS (use when a strong match exists) ---")
-    lines += [f"{i}. {name} ({desc})" for i, (name, desc, _) in enumerate(classic, start=len(gen_z) + 1)]
-    return "\n".join(lines)
+    keyed = [(rng.random() ** (1.0 / w), item) for item, w in zip(items, weights)]
+    keyed.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in keyed[:k]]
+
+
+def _domain_menu(rng: random.Random, pool_size: int = 6) -> str:
+    """
+    Render a RANDOM SUBSET of the taxonomy as a numbered menu, not the full
+    14 every time.
+
+    Shuffling the full list's presentation order (the previous fix) only
+    addressed position bias — a model still reliably picks whichever domains
+    best fit the curriculum's actual content, regardless of where they sit
+    in the list. For an economics curriculum, that's consistently Gaming,
+    Social Media, and Film/TV, since their descriptions ("in-game economies",
+    "monetization thresholds", "box office risk") read as the most literal
+    economic parallels of the 7 Gen-Z domains. Content-fit bias survives
+    reordering.
+
+    Restricting each call to a smaller, randomly-drawn candidate pool fixes
+    this structurally: if the three usual favorites simply aren't offered
+    this run, Gemini cannot reach for them no matter how well they'd fit.
+    Gen-Z domains are weighted 2x classic domains to preserve the general
+    "prefer Gen Z-native" intent, without guaranteeing the same three win
+    every time.
+    """
+    pool_size = min(pool_size, len(DOMAIN_TAXONOMY))
+    weights = [2.0 if tier == "gen_z" else 1.0 for _, _, tier in DOMAIN_TAXONOMY]
+    candidates = _weighted_sample_without_replacement(DOMAIN_TAXONOMY, weights, pool_size, rng)
+    rng.shuffle(candidates)  # presentation order carries no preference signal
+    return "\n".join(f"{i}. {name} ({desc})" for i, (name, desc, _) in enumerate(candidates, start=1))
 
 
 def _system_instruction_diverse(rng: random.Random) -> str:
-    """Auto/multi-domain mode: 3 pitches, 3 different domains, menu order randomized per call."""
+    """Auto/multi-domain mode: 3 pitches, 3 different domains, drawn from a randomized candidate subset each call."""
     return (
         f"{_CREATIVE_DIRECTOR_PREAMBLE}\n\n"
         "STRICT DOMAIN DIVERSITY RULE: You MUST draw your 3 story concepts from THREE (3) COMPLETELY "
-        "DIFFERENT domain categories below. Never repeat a genre. Strongly prefer the Gen Z-native "
-        "domains unless the curriculum topic maps exceptionally well to a classic domain. The menu "
-        "below is in a randomized order this run — do not treat earlier-listed items as more suitable "
-        "just because they appear first; judge fit on the curriculum content alone.\n\nChoose from:\n\n"
+        "DIFFERENT domain categories below. Never repeat a genre. The list below is a curated subset "
+        "for this run, already weighted toward Gen Z-native categories and in randomized order — treat "
+        "every listed option as a fully valid choice; do not favor one just because it seems like the "
+        "most literal or obvious economic parallel. The least obvious strong fit often makes the most "
+        "memorable metaphor.\n\nChoose from:\n\n"
         f"{_domain_menu(rng)}"
     )
 
