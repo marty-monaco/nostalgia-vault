@@ -8,10 +8,10 @@ TheVault_CMS_Core via clean CSV or copyable SQL INSERT statements.
 import re
 import pandas as pd
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 
 from utils.config import resolve_gemini_key
-from utils.drafts import format_draft_age, load_draft, save_draft
+from utils.drafts import delete_draft, format_draft_age, load_draft, save_draft
 from utils.export_helpers import (
     build_cms_row,
     generate_sql_insert_statement,
@@ -43,10 +43,6 @@ st.set_page_config(
 # GEMINI API CLIENT SETUP
 # -----------------------------------------------------------------------------
 API_KEY = resolve_gemini_key()
-
-if API_KEY:
-    genai.configure(api_key=API_KEY)
-
 
 # -----------------------------------------------------------------------------
 # PIPELINE INPUTS (session state -> plain values; nothing runs at import time)
@@ -252,13 +248,18 @@ Explanation: [Rationale]
 """
         with st.spinner("Generating 90s narrative manifest and 4 psychometric MCQs..."):
             try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(prompt)
+                client = genai.Client(api_key=API_KEY)
+                response = client.models.generate_content(model=model_name, contents=prompt)
                 full_output = response.text
+                if not full_output:
+                    raise ValueError(
+                        "Gemini returned no text (the response may have been blocked or truncated)."
+                    )
 
                 script_txt, mcq_txt = split_script_and_mcqs(full_output)
                 st.session_state[KEY_PROD_SCRIPT] = script_txt
                 st.session_state[KEY_PROD_MCQS] = mcq_txt
+                st.session_state[KEY_RAW_PRODUCTION_OUTPUT] = full_output
                 st.session_state[KEY_PROD_TOPIC] = topic_title
                 st.session_state[KEY_PROD_PILOT] = target_pilot
                 st.session_state[KEY_LAST_GENERATED_METAPHOR] = chosen_metaphor
@@ -300,7 +301,8 @@ Explanation: [Rationale]
             with col_u:
                 video_url_input = st.text_input(
                     "Video Watch URL:",
-                    value="https://youtu.be/placeholder",
+                    value="",
+                    placeholder="https://youtu.be/... (leave blank if not uploaded yet)",
                 )
             with col_l:
                 vid_runtime = st.number_input(
@@ -309,6 +311,8 @@ Explanation: [Rationale]
                     max_value=300,
                     value=int(target_duration),
                 )
+            if not video_url_input:
+                st.caption("ℹ️ No URL yet — a placeholder will be written; update the CMS row once the video is live.")
 
             parsed_questions = parse_mcq_text(st.session_state[KEY_PROD_MCQS])
 
@@ -318,7 +322,12 @@ Explanation: [Rationale]
                     "Ensure all 4 questions end with a '?', list options A) through D), and state 'Correct Answer: [Letter]'."
                 )
                 with st.expander("Show Diagnostic Text"):
+                    st.caption("Parsed MCQ text (as edited above):")
                     st.text(st.session_state[KEY_PROD_MCQS])
+                    raw = st.session_state.get(KEY_RAW_PRODUCTION_OUTPUT)
+                    if raw:
+                        st.caption("Full raw Gemini output for this generation, before script/assessment splitting:")
+                        st.text(raw)
             else:
                 try:
                     cms_row = build_cms_row(
@@ -360,6 +369,23 @@ Explanation: [Rationale]
 
                     st.markdown("#### ⚡ Copy & Run SQL Directly in Supabase:")
                     st.code(sql_statement, language="sql")
+
+                    st.divider()
+                    st.caption(
+                        "Once this row has actually been inserted into Supabase, mark the draft done "
+                        "so it stops appearing as a resumable draft."
+                    )
+                    if st.button(
+                        "✅ Mark as Shipped (clear saved draft)",
+                        use_container_width=True,
+                        key="mark_shipped",
+                    ):
+                        pilot_for_delete = st.session_state.get(KEY_PROD_PILOT, target_pilot)
+                        topic_for_delete = st.session_state.get(KEY_PROD_TOPIC, topic_title)
+                        if delete_draft(pilot_for_delete, topic_for_delete):
+                            st.success(f"🗑️ Draft cleared for `{pilot_for_delete} / {topic_for_delete}`.")
+                        else:
+                            st.warning("Could not clear the draft (it may already be gone, or the DB is unreachable).")
 
                 except Exception as e:
                     st.error(f"❌ Schema alignment error: {e}")
