@@ -1,37 +1,80 @@
+"""
+utils/media/tts_engine.py
+Voice synthesis stub and provider interface for The Vault.
+"""
+
 import os
 from pathlib import Path
-from elevenlabs.client import ElevenLabs
+from typing import Dict, Any, List, Optional
+
 
 def generate_voiceover(
-    script_text: str, 
+    script_text: str,
     output_path: str = "temp_voiceover.mp3",
-    voice_id: str = "JBFqnCBsd6RMkjVDRZzb",
-    model_id: str = "eleven_turbo_v2_5"
-) -> dict:
+    voice_id: str = "default_narrator",
+    model_id: str = "eleven_turbo_v2_5",
+    use_mock: bool = True
+) -> Dict[str, Any]:
     """
-    Synthesizes speech from an 85-second script using ElevenLabs.
-    """
-    api_key = os.getenv("ELEVENLABS_API_KEY")
-    if not api_key:
-        raise ValueError("ELEVENLABS_API_KEY environment variable is missing.")
-
-    client = ElevenLabs(api_key=api_key)
+    Synthesizes speech from a script.
     
-    # Generate the stream
-    audio_stream = client.text_to_speech.convert(
-        text=script_text,
-        voice_id=voice_id,
-        model_id=model_id,
-        output_format="mp3_44100_128",
-    )
+    Returns a standardized dictionary:
+    {
+        "audio_path": str,
+        "duration_seconds": float,
+        "timestamps": List[Dict[str, Any]],  # Word/scene alignment cues
+        "status": "mocked" | "completed" | "failed"
+    }
+    """
+    if use_mock or not os.getenv("ELEVENLABS_API_KEY"):
+        return _mock_voiceover(script_text, output_path)
 
-    output_file = Path(output_path)
-    with open(output_file, "wb") as f:
-        for chunk in audio_stream:
-            f.write(chunk)
+    # --- Live Implementation Stub (ElevenLabs SDK) ---
+    try:
+        # Example when ready:
+        # from elevenlabs.client import ElevenLabs
+        # client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+        # response = client.text_to_speech.convert(...)
+        raise NotImplementedError("Live ElevenLabs integration is pending configuration.")
+    except Exception as e:
+        return {
+            "audio_path": "",
+            "duration_seconds": 0.0,
+            "timestamps": [],
+            "status": f"failed: {str(e)}"
+        }
+
+
+def _mock_voiceover(script_text: str, output_path: str) -> Dict[str, Any]:
+    """
+    Generates a placeholder payload and an empty mock audio file
+    to allow downstream pipeline execution without network calls.
+    """
+    out_file = Path(output_path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Write a dummy byte placeholder if file doesn't exist
+    if not out_file.exists():
+        out_file.write_bytes(b"MOCK_AUDIO_PAYLOAD")
+
+    # Estimate duration based on standard speaking rate (~140 words per minute)
+    words = script_text.split()
+    estimated_duration = max(5.0, round((len(words) / 140.0) * 60.0, 2))
+
+    # Generate synthetic cue points for visual synchronization
+    timestamps: List[Dict[str, Any]] = []
+    chunk_size = max(1, len(words) // 5)
+    for i in range(0, len(words), chunk_size):
+        chunk_text = " ".join(words[i:i + chunk_size])
+        time_offset = round((i / max(1, len(words))) * estimated_duration, 2)
+        timestamps.append({
+            "start_time": time_offset,
+            "text": chunk_text
+        })
 
     return {
-        "audio_path": str(output_file.resolve()),
-        "status": "completed"
+        "audio_path": str(out_file.resolve()),
+        "duration_seconds": estimated_duration,
+        "timestamps": timestamps,
+        "status": "mocked"
     }
-  
