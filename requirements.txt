@@ -5,3 +5,4 @@ pypdf
 beautifulsoup4
 PyPDF2
 google-generativeai
+supabase
