@@ -13,6 +13,9 @@ Resilience notes:
   (a) falls back to inlining the system instruction into the prompt if the API
   rejects `system_instruction` ("Developer instruction is not enabled for api
   version v1"), and (b) does not waste retries on permanent 4xx client errors.
+- 429 handling: daily-quota exhaustion fails fast with a user-presentable
+  GeminiQuotaError (no pointless retries) and optionally falls over to
+  fallback_models, which have their own per-model quota buckets.
 - On construction, the module path and effective API version are logged so a
   stale/duplicate copy of this file or a v1 client is easy to spot.
 """
@@ -43,6 +46,15 @@ DIRECT_NARRATIVE_OPTION = "Direct Narrative / Source-Faithful (Literal Storyboar
 # Substring (lowercased) of the 400 error returned when system_instruction is
 # sent to an API version that doesn't support it.
 _SI_UNSUPPORTED_MARKER = "developer instruction is not enabled"
+
+# 429 / quota handling.
+# Short per-minute throttles are worth waiting out; a daily-quota exhaustion
+# (or any wait longer than this) is not -- retrying just burns time.
+MAX_QUOTA_WAIT_SEC = 30.0
+# Tried in order when the primary model's quota is exhausted. Quotas are
+# tracked per model, so another model usually has its own untouched bucket.
+# Verify availability/limits in AI Studio; set to [] to disable fallback.
+DEFAULT_FALLBACK_MODELS: List[str] = ["gemini-2.5-flash-lite"]
 
 # ===========================================================================
 # DOMAIN TAXONOMY
@@ -271,13 +283,110 @@ def _is_system_instruction_unsupported(err: Exception) -> bool:
     return _SI_UNSUPPORTED_MARKER in str(err).lower()
 
 
+def _is_quota_error(err: Exception) -> bool:
+    """True for 429 / RESOURCE_EXHAUSTED errors."""
+    if getattr(err, "code", None) == 429:
+        return True
+    return "RESOURCE_EXHAUSTED" in str(err)
+
+
+def _parse_duration_seconds(text: str) -> Optional[float]:
+    """Parse '7829s' or '2h10m29.08s' style durations into seconds."""
+    m = re.fullmatch(r"\s*(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?\s*", text or "")
+    if not m or not any(m.groups()):
+        return None
+    h, mi, sec = m.groups()
+    return int(h or 0) * 3600 + int(mi or 0) * 60 + float(sec or 0)
+
+
+def _format_duration(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "an unknown time"
+    seconds = int(round(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m}m"
+    if m:
+        return f"{m}m {s}s" if s and m < 5 else f"{m}m"
+    return f"{s}s"
+
+
+def _parse_quota_error(err: Exception) -> Tuple[bool, Optional[float]]:
+    """
+    Returns (is_daily_quota, retry_after_seconds) for a 429 error, using the
+    structured error payload when available and falling back to the message text.
+    """
+    daily = False
+    retry_after: Optional[float] = None
+
+    payload = getattr(err, "details", None)
+    if isinstance(payload, dict):
+        for d in (payload.get("error") or {}).get("details", []) or []:
+            dtype = str(d.get("@type", ""))
+            if dtype.endswith("QuotaFailure"):
+                for v in d.get("violations", []) or []:
+                    quota_id = str(v.get("quotaId", ""))
+                    desc = str(v.get("description", "")).lower()
+                    if "perday" in quota_id.lower() or "per day" in desc:
+                        daily = True
+            elif dtype.endswith("RetryInfo"):
+                retry_after = _parse_duration_seconds(str(d.get("retryDelay", "")))
+
+    text = str(err)
+    if retry_after is None:
+        m = re.search(r"retry in ((?:\d+h)?(?:\d+m)?[\d.]+s)", text, re.I)
+        if m:
+            retry_after = _parse_duration_seconds(m.group(1))
+    if not daily and ("PerDay" in text or "per day" in text.lower()):
+        daily = True
+
+    return daily, retry_after
+
+
+class GeminiQuotaError(RuntimeError):
+    """
+    Raised when Gemini's quota is exhausted and waiting/retrying here won't help.
+    The message is written to be shown directly to the user.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        retry_after_s: Optional[float] = None,
+        daily: bool = False,
+        tried_models: Optional[List[str]] = None,
+    ):
+        self.model = model
+        self.retry_after_s = retry_after_s
+        self.daily = daily
+        self.tried_models = tried_models or [model]
+
+        scope = "daily" if daily else "rate"
+        tried = (
+            f" (tried: {', '.join(self.tried_models)})" if len(self.tried_models) > 1 else ""
+        )
+        wait = f" It should free up in about {_format_duration(retry_after_s)}." if retry_after_s else ""
+        super().__init__(
+            f"Gemini {scope} quota exhausted for {model}{tried}.{wait} "
+            "Free-tier daily quotas reset at midnight Pacific time. To keep going now, "
+            "enable billing on the Google Cloud project behind your API key, or use a "
+            "different model."
+        )
+
+
 # ===========================================================================
 # ORCHESTRATOR CLASS
 # ===========================================================================
 class UniverseOrchestrator:
     """Orchestrates structured conceptual auditions from curriculum text with extended analytics and refinement tools."""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = DEFAULT_MODEL):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = DEFAULT_MODEL,
+        fallback_models: Optional[List[str]] = None,
+    ):
         """
         api_key is optional. Without one the orchestrator runs in analytics-only
         mode: ranking, comparison, keyword and export helpers all work, but any
@@ -294,6 +403,10 @@ class UniverseOrchestrator:
                 self._client = None
 
         self.model = model
+        self.fallback_models: List[str] = (
+            list(DEFAULT_FALLBACK_MODELS) if fallback_models is None else list(fallback_models)
+        )
+        self.last_model_used: Optional[str] = None  # lets the UI show when a fallback served the request
         self.last_response: Optional[PitchAuditionResponse] = None
 
         # Diagnostic: makes a stale/duplicate copy of this module, or a client
@@ -332,15 +445,72 @@ class UniverseOrchestrator:
         """
         Single entry point for every structured-output Gemini call.
 
-        - Retries transient failures (network, 5xx, 429) with linear backoff.
-        - Fails fast on permanent 4xx client errors instead of burning retries.
-        - If the API rejects `system_instruction` (the "Developer instruction
-          is not enabled for api version v1" 400), transparently retries once
-          with the instruction inlined at the top of the prompt. That fallback
-          does not consume a retry attempt.
+        Tries the primary model, then each fallback model if (and only if) the
+        previous one hit a quota wall. Per-call behavior is in _call_model().
+        Raises GeminiQuotaError (user-presentable) if every model is exhausted.
         """
         client = self.client  # raises a clear ValueError in analytics-only mode
 
+        models_to_try = [self.model] + [m for m in self.fallback_models if m != self.model]
+        quota_errors: List[GeminiQuotaError] = []
+
+        for i, model_name in enumerate(models_to_try):
+            try:
+                result = self._call_model(
+                    client,
+                    model_name,
+                    system_instruction=system_instruction,
+                    prompt=prompt,
+                    temperature=temperature,
+                    schema=schema,
+                )
+                self.last_model_used = model_name
+                if i > 0:
+                    logger.warning("Request served by fallback model %s (primary %s exhausted).",
+                                   model_name, self.model)
+                return result
+
+            except GeminiQuotaError as qe:
+                quota_errors.append(qe)
+                if i + 1 < len(models_to_try):
+                    logger.warning("Quota exhausted for %s; trying fallback model %s.",
+                                   model_name, models_to_try[i + 1])
+                continue
+
+            except Exception as e:  # noqa: BLE001
+                if i == 0:
+                    raise  # a real problem with the primary model: surface it
+                logger.warning("Fallback model %s unusable (%s); skipping.", model_name, e)
+                continue
+
+        retry_values = [q.retry_after_s for q in quota_errors if q.retry_after_s is not None]
+        raise GeminiQuotaError(
+            model=self.model,
+            retry_after_s=min(retry_values) if retry_values else None,
+            daily=all(q.daily for q in quota_errors),
+            tried_models=models_to_try,
+        )
+
+    def _call_model(
+        self,
+        client: "genai.Client",
+        model_name: str,
+        *,
+        system_instruction: str,
+        prompt: str,
+        temperature: float,
+        schema: Any,
+    ):
+        """
+        One model, with retries:
+        - Transient failures (network, 5xx): linear backoff.
+        - 429: short per-minute throttles are waited out (honoring the server's
+          retry delay); daily-quota exhaustion or long waits raise GeminiQuotaError
+          immediately instead of burning retries.
+        - Other 4xx: fail fast.
+        - system_instruction rejected by the API version: retried once with the
+          instruction inlined into the prompt (doesn't consume a retry).
+        """
         use_system_instruction = True
         last_error: Optional[Exception] = None
         attempt = 1
@@ -364,7 +534,7 @@ class UniverseOrchestrator:
                     contents = f"{system_instruction}\n\n---\n\n{prompt}"
 
                 response = client.models.generate_content(
-                    model=self.model,
+                    model=model_name,
                     contents=contents,
                     config=config,
                 )
@@ -375,7 +545,6 @@ class UniverseOrchestrator:
             except Exception as e:  # noqa: BLE001
                 last_error = e
 
-                # Fallback path: doesn't count against the retry budget.
                 if use_system_instruction and _is_system_instruction_unsupported(e):
                     logger.warning(
                         "API rejected system_instruction (%s); retrying with the "
@@ -384,11 +553,26 @@ class UniverseOrchestrator:
                     use_system_instruction = False
                     continue
 
+                if _is_quota_error(e):
+                    daily, retry_after = _parse_quota_error(e)
+                    too_long = retry_after is not None and retry_after > MAX_QUOTA_WAIT_SEC
+                    if daily or too_long or attempt >= MAX_RETRIES:
+                        logger.error("Quota exhausted for %s (daily=%s, retry_after=%s).",
+                                     model_name, daily, retry_after)
+                        raise GeminiQuotaError(model_name, retry_after, daily) from e
+                    wait = (retry_after + 1.0) if retry_after is not None else RETRY_DELAY_SEC * attempt
+                    logger.warning("Rate limited on %s; waiting %.1fs (attempt %d/%d).",
+                                   model_name, wait, attempt, MAX_RETRIES)
+                    time.sleep(wait)
+                    attempt += 1
+                    continue
+
                 if _is_permanent_error(e):
                     logger.error("Gemini request rejected (not retrying): %s", e)
                     raise RuntimeError(f"Gemini request rejected (not retrying): {e}") from e
 
-                logger.warning("Gemini attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
+                logger.warning("Gemini attempt %d/%d failed on %s: %s",
+                               attempt, MAX_RETRIES, model_name, e)
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_DELAY_SEC * attempt)
                 attempt += 1
