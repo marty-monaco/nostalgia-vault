@@ -7,6 +7,14 @@ and support for Direct Narrative (literal storyboarding for YouTube Shorts).
 
 Extended with helper methods for pitch analysis, comparison, refinement, and metadata extraction.
 Configured with api_version="v1beta" to support system_instruction and structured output schemas.
+
+Resilience notes:
+- All Gemini structured-output calls go through _generate_structured(), which
+  (a) falls back to inlining the system instruction into the prompt if the API
+  rejects `system_instruction` ("Developer instruction is not enabled for api
+  version v1"), and (b) does not waste retries on permanent 4xx client errors.
+- On construction, the module path and effective API version are logged so a
+  stale/duplicate copy of this file or a v1 client is easy to spot.
 """
 import time
 import logging
@@ -17,6 +25,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,10 @@ RETRY_DELAY_SEC     = 2.0
 DEFAULT_DOMAIN      = "Any / Multi-Domain (Default)"
 
 DIRECT_NARRATIVE_OPTION = "Direct Narrative / Source-Faithful (Literal Storyboard for YouTube Shorts, No Metaphors)"
+
+# Substring (lowercased) of the 400 error returned when system_instruction is
+# sent to an API version that doesn't support it.
+_SI_UNSUPPORTED_MARKER = "developer instruction is not enabled"
 
 # ===========================================================================
 # DOMAIN TAXONOMY
@@ -213,6 +226,10 @@ SYSTEM_INSTRUCTION_DIRECT = (
     "3. AUDIENCE RETENTION: Frame hooks around high stakes, startling facts, or dramatic moments directly from the source."
 )
 
+SYSTEM_INSTRUCTION_REFINE = (
+    "You are a narrative refinement specialist focused on improving educational storytelling."
+)
+
 AUDITION_METAPHOR_TEMPLATE = (
     "Analyze the following educational material:\n\n"
     "---\n{curriculum_text}\n---\n\n"
@@ -233,6 +250,26 @@ REFINEMENT_TEMPLATE = (
     "FEEDBACK / REFINEMENT GOALS:\n{feedback}\n\n"
     "Generate a REVISED version of this pitch that incorporates the feedback while maintaining the core domain, hook, and pedagogical value."
 )
+
+
+# ===========================================================================
+# ERROR CLASSIFICATION
+# ===========================================================================
+def _is_permanent_error(err: Exception) -> bool:
+    """
+    True for 4xx client errors that will never succeed on retry (bad request,
+    auth, not found, ...). 429 rate-limit/quota errors are NOT permanent --
+    those are worth backing off and retrying.
+    """
+    if not isinstance(err, genai_errors.ClientError):
+        return False
+    code = getattr(err, "code", None)
+    return code is not None and code != 429
+
+
+def _is_system_instruction_unsupported(err: Exception) -> bool:
+    return _SI_UNSUPPORTED_MARKER in str(err).lower()
+
 
 # ===========================================================================
 # ORCHESTRATOR CLASS
@@ -259,6 +296,18 @@ class UniverseOrchestrator:
         self.model = model
         self.last_response: Optional[PitchAuditionResponse] = None
 
+        # Diagnostic: makes a stale/duplicate copy of this module, or a client
+        # built with the wrong API version, visible in the logs immediately.
+        try:
+            _opts = getattr(getattr(self._client, "_api_client", None), "_http_options", None)
+            _ver = getattr(_opts, "api_version", "unknown")
+        except Exception:
+            _ver = "unknown"
+        logger.info(
+            "UniverseOrchestrator initialised (module=%s, model=%s, api_version=%s, client=%s)",
+            __file__, self.model, _ver, "ready" if self._client else "none",
+        )
+
     @property
     def client(self) -> "genai.Client":
         """Gemini client. Raises if this instance was created without an API key."""
@@ -269,6 +318,86 @@ class UniverseOrchestrator:
             )
         return self._client
 
+    # =========================================================================
+    # CORE: RESILIENT STRUCTURED-OUTPUT CALL
+    # =========================================================================
+    def _generate_structured(
+        self,
+        *,
+        system_instruction: str,
+        prompt: str,
+        temperature: float,
+        schema: Any,
+    ):
+        """
+        Single entry point for every structured-output Gemini call.
+
+        - Retries transient failures (network, 5xx, 429) with linear backoff.
+        - Fails fast on permanent 4xx client errors instead of burning retries.
+        - If the API rejects `system_instruction` (the "Developer instruction
+          is not enabled for api version v1" 400), transparently retries once
+          with the instruction inlined at the top of the prompt. That fallback
+          does not consume a retry attempt.
+        """
+        client = self.client  # raises a clear ValueError in analytics-only mode
+
+        use_system_instruction = True
+        last_error: Optional[Exception] = None
+        attempt = 1
+
+        while attempt <= MAX_RETRIES:
+            try:
+                if use_system_instruction:
+                    config = types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=temperature,
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                    )
+                    contents = prompt
+                else:
+                    config = types.GenerateContentConfig(
+                        temperature=temperature,
+                        response_mime_type="application/json",
+                        response_schema=schema,
+                    )
+                    contents = f"{system_instruction}\n\n---\n\n{prompt}"
+
+                response = client.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                )
+                if response.parsed:
+                    return response.parsed
+                raise ValueError("Model response did not contain structured parsed data.")
+
+            except Exception as e:  # noqa: BLE001
+                last_error = e
+
+                # Fallback path: doesn't count against the retry budget.
+                if use_system_instruction and _is_system_instruction_unsupported(e):
+                    logger.warning(
+                        "API rejected system_instruction (%s); retrying with the "
+                        "instruction inlined into the prompt.", e
+                    )
+                    use_system_instruction = False
+                    continue
+
+                if _is_permanent_error(e):
+                    logger.error("Gemini request rejected (not retrying): %s", e)
+                    raise RuntimeError(f"Gemini request rejected (not retrying): {e}") from e
+
+                logger.warning("Gemini attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_DELAY_SEC * attempt)
+                attempt += 1
+
+        raise RuntimeError(f"Gemini call failed after {MAX_RETRIES} attempts: {last_error}")
+
+    # =========================================================================
+    # AUDITION
+    # =========================================================================
     def audition_pitches(
         self,
         curriculum_text: Optional[str] = None,
@@ -341,34 +470,14 @@ class UniverseOrchestrator:
                 domain_instruction=domain_instruction
             )
 
-        config = types.GenerateContentConfig(
+        result = self._generate_structured(
             system_instruction=system_instruction,
+            prompt=prompt,
             temperature=temp,
-            response_mime_type="application/json",
-            response_schema=PitchAuditionResponse
+            schema=PitchAuditionResponse,
         )
-
-        client = self.client
-
-        last_error = None
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=config
-                )
-                if response.parsed:
-                    self.last_response = response.parsed
-                    return response.parsed
-                raise ValueError("Model response did not contain structured parsed data.")
-            except Exception as e:
-                last_error = e
-                logger.warning("Audition pitch attempt %d/%d failed: %s", attempt, MAX_RETRIES, e)
-                if attempt < MAX_RETRIES:
-                    time.sleep(RETRY_DELAY_SEC * attempt)
-
-        raise RuntimeError(f"Failed to generate story audition pitches after {MAX_RETRIES} attempts: {last_error}")
+        self.last_response = result
+        return result
 
     def audition_metaphors(
         self,
@@ -482,24 +591,15 @@ class UniverseOrchestrator:
             feedback=feedback
         )
 
-        config = types.GenerateContentConfig(
-            system_instruction="You are a narrative refinement specialist focused on improving educational storytelling.",
-            temperature=temperature,
-            response_mime_type="application/json",
-            response_schema=StoryPitch
-        )
-
         try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=config
+            return self._generate_structured(
+                system_instruction=SYSTEM_INSTRUCTION_REFINE,
+                prompt=prompt,
+                temperature=temperature,
+                schema=StoryPitch,
             )
-            if response.parsed:
-                return response.parsed
-            raise ValueError("Model response did not contain structured parsed data.")
         except Exception as e:
-            logger.error(f"Failed to refine pitch: {e}")
+            logger.error("Failed to refine pitch: %s", e)
             raise
 
     def refine_response(
