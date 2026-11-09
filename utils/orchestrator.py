@@ -6,6 +6,7 @@ from raw curriculum strings using the Gemini API, with optional domain steering
 and support for Direct Narrative (literal storyboarding for YouTube Shorts).
 
 Extended with helper methods for pitch analysis, comparison, refinement, and metadata extraction.
+Configured with api_version="v1beta" to support system_instruction and structured output schemas.
 """
 import time
 import logging
@@ -108,10 +109,10 @@ class StoryPitch(BaseModel):
         """
         hook_words = len(self.hook.split())
         title_words = len(self.title.split())
-        # Optimal hook is 15-30 words, title 3-7 words
         hook_score = min(hook_words / 30, 1.0)
         title_score = min(title_words / 7, 1.0)
         return (hook_score + title_score) / 2
+
 
 class PitchAuditionResponse(BaseModel):
     pitches: list[StoryPitch] = Field(
@@ -164,29 +165,12 @@ def _weighted_sample_without_replacement(
 
 def _domain_menu(rng: random.Random, pool_size: int = 6) -> str:
     """
-    Render a RANDOM SUBSET of the taxonomy as a numbered menu, not the full
-    14 every time.
-
-    Shuffling the full list's presentation order (the previous fix) only
-    addressed position bias — a model still reliably picks whichever domains
-    best fit the curriculum's actual content, regardless of where they sit
-    in the list. For an economics curriculum, that's consistently Gaming,
-    Social Media, and Film/TV, since their descriptions ("in-game economies",
-    "monetization thresholds", "box office risk") read as the most literal
-    economic parallels of the 7 Gen-Z domains. Content-fit bias survives
-    reordering.
-
-    Restricting each call to a smaller, randomly-drawn candidate pool fixes
-    this structurally: if the three usual favorites simply aren't offered
-    this run, Gemini cannot reach for them no matter how well they'd fit.
-    Gen-Z domains are weighted 2x classic domains to preserve the general
-    "prefer Gen Z-native" intent, without guaranteeing the same three win
-    every time.
+    Render a RANDOM SUBSET of the taxonomy as a numbered menu.
     """
     pool_size = min(pool_size, len(DOMAIN_TAXONOMY))
     weights = [2.0 if tier == "gen_z" else 1.0 for _, _, tier in DOMAIN_TAXONOMY]
     candidates = _weighted_sample_without_replacement(DOMAIN_TAXONOMY, weights, pool_size, rng)
-    rng.shuffle(candidates)  # presentation order carries no preference signal
+    rng.shuffle(candidates)
     return "\n".join(f"{i}. {name} ({desc})" for i, (name, desc, _) in enumerate(candidates, start=1))
 
 
@@ -205,13 +189,7 @@ def _system_instruction_diverse(rng: random.Random) -> str:
 
 
 def _system_instruction_forced(domain: str) -> str:
-    """
-    Single-domain mode: the user explicitly chose one domain, so all 3
-    pitches must come from it. Previously, an explicit domain_choice only
-    "prioritized" one pitch while the diversity rule above still forced the
-    other two into different domains — the steering control never actually
-    steered all three.
-    """
+    """Single-domain mode: all 3 pitches must come from the chosen domain."""
     description = _DOMAIN_DESCRIPTIONS.get(domain, "")
     flavor = f" ({description})" if description else ""
     return (
@@ -269,7 +247,15 @@ class UniverseOrchestrator:
         method that calls Gemini (audition_*, refine_*) raises a clear ValueError
         via the `client` property.
         """
-        self._client = genai.Client(api_key=api_key) if api_key else None
+        http_opts = types.HttpOptions(api_version="v1beta")
+        if api_key:
+            self._client = genai.Client(api_key=api_key, http_options=http_opts)
+        else:
+            try:
+                self._client = genai.Client(http_options=http_opts)
+            except Exception:
+                self._client = None
+
         self.model = model
         self.last_response: Optional[PitchAuditionResponse] = None
 
@@ -325,7 +311,6 @@ class UniverseOrchestrator:
                 domain_instruction=domain_instruction
             )
         elif domain and domain != DEFAULT_DOMAIN and domain in DOMAIN_NAMES:
-            # A specific domain was explicitly chosen: force all 3 pitches into it.
             system_instruction = _system_instruction_forced(domain)
             domain_instruction = (
                 f"All three pitches MUST be drawn from the '{domain}' domain specifically — "
@@ -336,7 +321,6 @@ class UniverseOrchestrator:
                 domain_instruction=domain_instruction
             )
         else:
-            # DEFAULT_DOMAIN, blank, or an unrecognized string: diverse auto mode.
             system_instruction = _system_instruction_diverse(random.Random())
             if domain and domain != DEFAULT_DOMAIN:
                 logger.warning(
@@ -364,7 +348,7 @@ class UniverseOrchestrator:
             response_schema=PitchAuditionResponse
         )
 
-        client = self.client  # fail fast on a missing key instead of retrying a config error
+        client = self.client
 
         last_error = None
         for attempt in range(1, MAX_RETRIES + 1):
@@ -465,12 +449,10 @@ class UniverseOrchestrator:
         Returns top keywords from title and core analogy.
         """
         combined_text = f"{pitch.title} {pitch.core_analogy_or_beats}".lower()
-        # Remove common stop words
         stop_words = {
             "the", "a", "an", "and", "or", "is", "are", "was", "were", "be", "been",
             "to", "of", "in", "on", "at", "for", "from", "with", "by", "as"
         }
-        # Simple word extraction
         words = re.findall(r'\b[a-z]{4,}\b', combined_text)
         unique_words = [w for w in words if w not in stop_words]
         return unique_words[:max_keywords]
@@ -493,12 +475,6 @@ class UniverseOrchestrator:
     ) -> StoryPitch:
         """
         Refine a single pitch based on feedback.
-        Args:
-            pitch: The pitch to refine
-            feedback: Specific feedback/goals for refinement
-            temperature: Creativity temperature for refinement
-        Returns:
-            Refined StoryPitch object
         """
         pitch_markdown = pitch.to_markdown_card()
         prompt = REFINEMENT_TEMPLATE.format(
@@ -534,12 +510,6 @@ class UniverseOrchestrator:
     ) -> PitchAuditionResponse:
         """
         Refine multiple pitches based on per-pitch feedback.
-        Args:
-            response: The full audition response
-            feedback_dict: Dict of {pitch_index: feedback_text}
-            temperature: Creativity temperature
-        Returns:
-            New PitchAuditionResponse with refined pitches
         """
         refined_pitches = []
         for idx, pitch in enumerate(response.pitches):
@@ -560,10 +530,7 @@ class UniverseOrchestrator:
         response: PitchAuditionResponse,
         domain_keyword: str
     ) -> List[Tuple[int, StoryPitch]]:
-        """
-        Filter pitches that match a domain keyword.
-        Returns: List of (index, pitch) tuples
-        """
+        """Filter pitches that match a domain keyword."""
         matches = [
             (i, pitch)
             for i, pitch in enumerate(response.pitches)
@@ -574,16 +541,9 @@ class UniverseOrchestrator:
     def select_pitch_by_engagement_rank(
         self,
         response: PitchAuditionResponse,
-        rank: int = 1  # 1=highest engagement, 3=lowest
+        rank: int = 1
     ) -> StoryPitch:
-        """
-        Select a pitch by engagement rank (1-3).
-        Args:
-            response: The audition response
-            rank: Engagement rank (1=best, 2=middle, 3=lowest)
-        Returns:
-            The selected StoryPitch
-        """
+        """Select a pitch by engagement rank (1-3)."""
         if not 1 <= rank <= 3:
             raise ValueError("Rank must be 1-3")
         ranked = self.rank_pitches_by_engagement(response)
@@ -594,10 +554,7 @@ class UniverseOrchestrator:
     # =========================================================================
 
     def export_response_to_csv_rows(self, response: PitchAuditionResponse) -> List[Dict[str, str]]:
-        """
-        Export response as CSV-compatible rows.
-        Returns: List of dicts with flattened pitch data
-        """
+        """Export response as CSV-compatible rows."""
         rows = []
         for idx, pitch in enumerate(response.pitches):
             row = {
@@ -614,10 +571,7 @@ class UniverseOrchestrator:
         return rows
 
     def summarize_response(self, response: PitchAuditionResponse) -> Dict[str, Any]:
-        """
-        Generate a human-readable summary of the full response.
-        Returns: Dict with summary statistics and analysis.
-        """
+        """Generate a human-readable summary of the full response."""
         comparison = self.compare_pitches(response)
         return {
             "narrative_mode": self.get_narrative_mode(response),
