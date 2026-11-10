@@ -248,6 +248,13 @@ AUDITION_METAPHOR_TEMPLATE = (
     "Generate exactly three (3) distinct story pitches that transform these underlying mechanics into engaging narrative metaphors.\n"
     "Domain Steering Instruction: {domain_instruction}\n"
 )
+    VOCABULARY SCAFFOLDING & DUAL-CODING DIRECTIVE:
+    1. THE RULE OF TWO NAMES: Never introduce a technical or anatomical term in isolation. Always precede or immediately follow it with a plain-English, 2-to-3 word functional nickname.
+     - Poor: "The nerve triggers acetylcholine across the cleft."
+     - Good: "The nerve releases a molecular key—**acetylcholine**—to unlock the muscle."
+    2. KEYWORD HIGHLIGHT SYNTAX: Wrap every primary technical term in double asterisks (e.g., **acetylcholine**, **sarcomere**, **myosin**).
+     - The video compiler parses these markers to render kinetic typography cards, on-screen glossary callouts, and phonetic subtext.
+    3. THE ECHO TECHNIQUE: If a term is central to the concept, re-reference it naturally within 15–20 seconds using its nickname or mechanism so the student hears it twice in context.
 
 AUDITION_DIRECT_TEMPLATE = (
     "Analyze the following educational source material:\n\n"
