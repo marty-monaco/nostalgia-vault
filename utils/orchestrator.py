@@ -92,8 +92,8 @@ class StoryPitch(BaseModel):
     domain_category: str = Field(description="Domain from the taxonomy or 'Direct Narrative'")
     hook: str = Field(description="The cinematic hook / first 3-5 seconds premise that stops scrolling")
     core_analogy_or_beats: str = Field(
-        description="Mapping of mechanics to the domain or 3-4 chronological story beats. "
-                    "Must wrap technical/anatomical keywords in double asterisks (e.g., **acetylcholine**)."
+        description="Mapping of technical mechanics to the domain, or 3-4 chronological story beats. "
+                    "Must wrap key technical/anatomical terms in double asterisks (e.g., **acetylcholine**)."
     )
     lift_index_or_climax: str = Field(description="Why this drives conceptual mastery, or the dramatic resolution/insight")
 
