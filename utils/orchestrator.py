@@ -239,16 +239,19 @@ AUDITION_METAPHOR_TEMPLATE = (
     "Analyze the following educational material:\n\n"
     "---\n{curriculum_text}\n---\n\n"
     "Generate exactly three (3) distinct story pitches that transform these underlying mechanics into engaging narrative metaphors.\n"
-    "Ensure technical terms have functional nicknames and are wrapped in **double asterisks** for visual callout.\n"
-    "Domain Steering Instruction: {domain_instruction}\n"
+    "Domain Steering Instruction: {domain_instruction}\n\n"
+    "VOCABULARY SCAFFOLDING & DUAL-CODING REMINDER:\n"
+    "- Pair every technical term with a 2-to-3 word functional nickname.\n"
+    "- Wrap every technical keyword in double asterisks (e.g., **acetylcholine**).\n"
 )
 
 AUDITION_DIRECT_TEMPLATE = (
     "Analyze the following educational source material:\n\n"
     "---\n{curriculum_text}\n---\n\n"
-    "Generate exactly three (3) distinct YouTube Shorts storyboard concepts that depict these concepts directly and literally.\n"
-    "Ensure technical terms have functional nicknames and are wrapped in **double asterisks** for visual callout.\n"
-    "Directorial Focus: {domain_instruction}\n"
+    "Generate exactly three (3) distinct YouTube Shorts storyboard concepts that depict these events or concepts directly and literally, without using metaphors or allegories.\n"
+    "Directorial Focus: {domain_instruction}\n\n"
+    "VOCABULARY SCAFFOLDING REMINDER:\n"
+    "- Pair every technical term with a functional nickname and wrap keywords in **double asterisks**.\n"
 )
 
 REFINEMENT_TEMPLATE = (
