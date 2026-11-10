@@ -8,6 +8,12 @@ and support for Direct Narrative (literal storyboarding for YouTube Shorts).
 Extended with helper methods for pitch analysis, comparison, refinement, and metadata extraction.
 Configured with api_version="v1beta" to support system_instruction and structured output schemas.
 
+Vocabulary Scaffolding Features:
+- Dual-Coding & Functional Nicknames: Mandates that complex anatomical/technical
+  terms are paired with 2-to-3 word plain-English nicknames.
+- Markdown Kinetic Anchors: Wraps key terms in double asterisks (**term**) so
+  downstream subtitle renderers (ASS) and video compilers can create kinetic callouts.
+
 Resilience notes:
 - All Gemini structured-output calls go through _generate_structured(), which
   (a) falls back to inlining the system instruction into the prompt if the API
@@ -48,22 +54,11 @@ DIRECT_NARRATIVE_OPTION = "Direct Narrative / Source-Faithful (Literal Storyboar
 _SI_UNSUPPORTED_MARKER = "developer instruction is not enabled"
 
 # 429 / quota handling.
-# Short per-minute throttles are worth waiting out; a daily-quota exhaustion
-# (or any wait longer than this) is not -- retrying just burns time.
 MAX_QUOTA_WAIT_SEC = 30.0
-# Tried in order when the primary model's quota is exhausted. Quotas are
-# tracked per model, so another model usually has its own untouched bucket.
-# Verify availability/limits in AI Studio; set to [] to disable fallback.
 DEFAULT_FALLBACK_MODELS: List[str] = ["gemini-2.5-flash-lite"]
 
 # ===========================================================================
 # DOMAIN TAXONOMY
-# Single source of truth for every metaphor domain. The UI selectbox
-# (2_Orchestrate.py) builds its options from get_domain_choices() instead of
-# a hand-copied list, so the two can never drift apart again -- this file
-# previously defined 14 domains here but the page only offered 8 of them.
-# tier "gen_z" / "classic" controls both the system-prompt framing (Gen Z
-# domains are "strongly preferred") and menu ordering.
 # ===========================================================================
 DOMAIN_TAXONOMY: List[Tuple[str, str, str]] = [
     ("Gaming & Esports", "resource management, skill trees, in-game economies, battle pass mechanics", "gen_z"),
@@ -86,11 +81,7 @@ _DOMAIN_DESCRIPTIONS: Dict[str, str] = {name: desc for name, desc, _ in DOMAIN_T
 
 
 def get_domain_choices() -> List[str]:
-    """
-    Full, canonical list of selectable domains: the two special modes first,
-    then all 14 taxonomy domains in stable order. Pages should build their
-    domain selectbox from this instead of hardcoding a subset.
-    """
+    """Canonical list of selectable domains."""
     return [DEFAULT_DOMAIN, DIRECT_NARRATIVE_OPTION, *DOMAIN_NAMES]
 
 # ===========================================================================
@@ -100,7 +91,10 @@ class StoryPitch(BaseModel):
     title: str = Field(description="The catchy title of the story or short")
     domain_category: str = Field(description="Domain from the taxonomy or 'Direct Narrative'")
     hook: str = Field(description="The cinematic hook / first 3-5 seconds premise that stops scrolling")
-    core_analogy_or_beats: str = Field(description="Mapping of technical mechanics to the domain, or 3-4 chronological story beats")
+    core_analogy_or_beats: str = Field(
+        description="Mapping of mechanics to the domain or 3-4 chronological story beats. "
+                    "Must wrap technical/anatomical keywords in double asterisks (e.g., **acetylcholine**)."
+    )
     lift_index_or_climax: str = Field(description="Why this drives conceptual mastery, or the dramatic resolution/insight")
 
     def to_markdown_card(self) -> str:
@@ -108,7 +102,7 @@ class StoryPitch(BaseModel):
             f"### TITLE: {self.title}\n"
             f"**Domain Category**: {self.domain_category}\n"
             f"**The Hook / Premise**: {self.hook}\n"
-            f"**The Core Analogy**: {self.core_analogy_or_beats}\n"
+            f"**The Core Analogy & Scaffolding**: {self.core_analogy_or_beats}\n"
             f"**The Lift Index**: {self.lift_index_or_climax}"
         )
 
@@ -128,10 +122,7 @@ class StoryPitch(BaseModel):
         return total
 
     def engagement_score(self) -> float:
-        """
-        Heuristic engagement score (0.0-1.0) based on hook and title length.
-        Longer, more detailed hooks tend to be more engaging.
-        """
+        """Heuristic engagement score (0.0-1.0) based on hook and title length."""
         hook_words = len(self.hook.split())
         title_words = len(self.title.split())
         hook_score = min(hook_words / 30, 1.0)
@@ -143,7 +134,7 @@ class PitchAuditionResponse(BaseModel):
     pitches: list[StoryPitch] = Field(
         min_length=3,
         max_length=3,
-        description="Exactly 3 completely distinct story concepts"
+        description="Exactly 3 completely distinct story concepts with scaffolded vocabulary"
     )
 
     def to_markdown_cards(self) -> str:
@@ -163,7 +154,7 @@ class PitchAuditionResponse(BaseModel):
         return all("Direct Narrative" in p.domain_category for p in self.pitches)
 
 # ===========================================================================
-# SYSTEM INSTRUCTIONS & TEMPLATES
+# SYSTEM INSTRUCTIONS & TEMPLATES WITH VOCABULARY SCAFFOLDING
 # ===========================================================================
 _CREATIVE_DIRECTOR_PREAMBLE = (
     "You are an elite Creative Director, Narrative Designer, and Instructional Expert "
@@ -172,26 +163,26 @@ _CREATIVE_DIRECTOR_PREAMBLE = (
     "curriculum mechanics into high-engagement metaphors that feel NATIVE to the world "
     "students actually live in — not the world textbooks assume they live in.\n\n"
     "TONE DIRECTIVE: Scripts must feel cinematic, fun, and culturally alive. Avoid corporate "
-    "or academic framing. The best metaphors make students feel like insiders, not students."
+    "or academic framing. The best metaphors make students feel like insiders, not students.\n\n"
+    "VOCABULARY SCAFFOLDING & DUAL-CODING RULES (MANDATORY):\n"
+    "1. RULE OF TWO NAMES: Never introduce a technical, anatomical, or chemical term in isolation. "
+    "Always pair it with a plain-English 2-to-3 word functional nickname (e.g., 'the chemical key—**acetylcholine**', "
+    "'the power plant—**mitochondria**', 'the cellular lock—**sarcolemma**').\n"
+    "2. KINETIC HIGHLIGHT SYNTAX: Wrap every primary technical keyword in double asterisks "
+    "(e.g., **acetylcholine**, **action potential**, **myosin**) so the video engine can render dynamic callouts.\n"
+    "3. RETENTION ECHO: Re-reference primary mechanisms with their functional nickname 15-20 seconds after introduction."
 )
 
 
 def _weighted_sample_without_replacement(
     items: List[Tuple[str, str, str]], weights: List[float], k: int, rng: random.Random
 ) -> List[Tuple[str, str, str]]:
-    """
-    Efraimidis-Spirakis weighted reservoir sampling: pick k items without
-    replacement, each item's odds of inclusion proportional to its weight.
-    """
     keyed = [(rng.random() ** (1.0 / w), item) for item, w in zip(items, weights)]
     keyed.sort(key=lambda pair: pair[0], reverse=True)
     return [item for _, item in keyed[:k]]
 
 
 def _domain_menu(rng: random.Random, pool_size: int = 6) -> str:
-    """
-    Render a RANDOM SUBSET of the taxonomy as a numbered menu.
-    """
     pool_size = min(pool_size, len(DOMAIN_TAXONOMY))
     weights = [2.0 if tier == "gen_z" else 1.0 for _, _, tier in DOMAIN_TAXONOMY]
     candidates = _weighted_sample_without_replacement(DOMAIN_TAXONOMY, weights, pool_size, rng)
@@ -200,15 +191,14 @@ def _domain_menu(rng: random.Random, pool_size: int = 6) -> str:
 
 
 def _system_instruction_diverse(rng: random.Random) -> str:
-    """Auto/multi-domain mode: 3 pitches, 3 different domains, drawn from a randomized candidate subset each call."""
+    """Auto/multi-domain mode: 3 pitches, 3 different domains, drawn from a randomized candidate subset."""
     return (
         f"{_CREATIVE_DIRECTOR_PREAMBLE}\n\n"
         "STRICT DOMAIN DIVERSITY RULE: You MUST draw your 3 story concepts from THREE (3) COMPLETELY "
         "DIFFERENT domain categories below. Never repeat a genre. The list below is a curated subset "
         "for this run, already weighted toward Gen Z-native categories and in randomized order — treat "
         "every listed option as a fully valid choice; do not favor one just because it seems like the "
-        "most literal or obvious economic parallel. The least obvious strong fit often makes the most "
-        "memorable metaphor.\n\nChoose from:\n\n"
+        "most literal or obvious parallel.\n\nChoose from:\n\n"
         f"{_domain_menu(rng)}"
     )
 
@@ -223,8 +213,7 @@ def _system_instruction_forced(domain: str) -> str:
         f"{domain}{flavor}. ALL THREE story concepts MUST be drawn from this SAME domain. "
         "Do not substitute, blend in, or drift toward a different domain for any of the three. "
         "Differentiate the three concepts through different hooks, different underlying mechanics "
-        "mapped from the curriculum, and different narrative angles WITHIN this one domain — never "
-        "by reaching for a second or third domain."
+        "mapped from the curriculum, and different narrative angles WITHIN this one domain."
     )
 
 SYSTEM_INSTRUCTION_DIRECT = (
@@ -232,34 +221,33 @@ SYSTEM_INSTRUCTION_DIRECT = (
     "Your superpower is turning dense, complex, or historical source text into thrilling, "
     "fast-paced short-form video story concepts without using metaphors or allegories.\n\n"
     "STRICT DIRECT NARRATIVE DIRECTIVE:\n"
-    "1. NO METAPHORS OR ANALOGIES: Extract only the literal events, people, dates, conflicts, and stakes.\n"
-    "2. FOCUS ON PACING & VISUALS: Pitch 3 distinct directorial angles on the exact same material "
-    "(e.g., Angle 1: High-energy character conflict, Angle 2: Chronological countdown, Angle 3: Forensic reveal).\n"
-    "3. AUDIENCE RETENTION: Frame hooks around high stakes, startling facts, or dramatic moments directly from the source."
+    "1. NO METAPHORS OR ALLEGORIES: Extract only the literal events, anatomy, steps, and stakes.\n"
+    "2. VOCABULARY SCAFFOLDING & DUAL-CODING:\n"
+    "   - Every complex technical term must be preceded or followed by a functional 2-to-3 word nickname.\n"
+    "   - Wrap all formal technical keywords in double asterisks (e.g., **acetylcholine**, **synapse**) for kinetic highlighting.\n"
+    "3. PACING & VISUALS: Pitch 3 distinct directorial angles on the exact same material "
+    "(e.g., Angle 1: High-energy bio-thriller, Angle 2: Step-by-step molecular countdown, Angle 3: Forensic diagnostic reveal).\n"
+    "4. AUDIENCE RETENTION: Frame hooks around high stakes, bodily adaptations, or startling physiological facts."
 )
 
 SYSTEM_INSTRUCTION_REFINE = (
-    "You are a narrative refinement specialist focused on improving educational storytelling."
+    "You are a narrative refinement specialist focused on improving educational storytelling "
+    "and student retention through vocabulary scaffolding and kinetic dual-coding."
 )
 
 AUDITION_METAPHOR_TEMPLATE = (
     "Analyze the following educational material:\n\n"
     "---\n{curriculum_text}\n---\n\n"
     "Generate exactly three (3) distinct story pitches that transform these underlying mechanics into engaging narrative metaphors.\n"
+    "Ensure technical terms have functional nicknames and are wrapped in **double asterisks** for visual callout.\n"
     "Domain Steering Instruction: {domain_instruction}\n"
 )
-    VOCABULARY SCAFFOLDING & DUAL-CODING DIRECTIVE:
-    1. THE RULE OF TWO NAMES: Never introduce a technical or anatomical term in isolation. Always precede or immediately follow it with a plain-English, 2-to-3 word functional nickname.
-     - Poor: "The nerve triggers acetylcholine across the cleft."
-     - Good: "The nerve releases a molecular key—**acetylcholine**—to unlock the muscle."
-    2. KEYWORD HIGHLIGHT SYNTAX: Wrap every primary technical term in double asterisks (e.g., **acetylcholine**, **sarcomere**, **myosin**).
-     - The video compiler parses these markers to render kinetic typography cards, on-screen glossary callouts, and phonetic subtext.
-    3. THE ECHO TECHNIQUE: If a term is central to the concept, re-reference it naturally within 15–20 seconds using its nickname or mechanism so the student hears it twice in context.
 
 AUDITION_DIRECT_TEMPLATE = (
     "Analyze the following educational source material:\n\n"
     "---\n{curriculum_text}\n---\n\n"
-    "Generate exactly three (3) distinct YouTube Shorts storyboard concepts that depict these events or concepts directly and literally, without using metaphors or allegories.\n"
+    "Generate exactly three (3) distinct YouTube Shorts storyboard concepts that depict these concepts directly and literally.\n"
+    "Ensure technical terms have functional nicknames and are wrapped in **double asterisks** for visual callout.\n"
     "Directorial Focus: {domain_instruction}\n"
 )
 
@@ -267,7 +255,8 @@ REFINEMENT_TEMPLATE = (
     "You are a narrative refinement specialist. Review the following story pitch and enhance it based on the feedback provided.\n\n"
     "ORIGINAL PITCH:\n---\n{original_pitch}\n---\n\n"
     "FEEDBACK / REFINEMENT GOALS:\n{feedback}\n\n"
-    "Generate a REVISED version of this pitch that incorporates the feedback while maintaining the core domain, hook, and pedagogical value."
+    "Generate a REVISED version of this pitch that incorporates the feedback while maintaining the core domain, hook, "
+    "vocabulary scaffolding (functional nicknames), keyword bolding (**term**), and pedagogical value."
 )
 
 
@@ -275,11 +264,6 @@ REFINEMENT_TEMPLATE = (
 # ERROR CLASSIFICATION
 # ===========================================================================
 def _is_permanent_error(err: Exception) -> bool:
-    """
-    True for 4xx client errors that will never succeed on retry (bad request,
-    auth, not found, ...). 429 rate-limit/quota errors are NOT permanent --
-    those are worth backing off and retrying.
-    """
     if not isinstance(err, genai_errors.ClientError):
         return False
     code = getattr(err, "code", None)
@@ -291,14 +275,12 @@ def _is_system_instruction_unsupported(err: Exception) -> bool:
 
 
 def _is_quota_error(err: Exception) -> bool:
-    """True for 429 / RESOURCE_EXHAUSTED errors."""
     if getattr(err, "code", None) == 429:
         return True
     return "RESOURCE_EXHAUSTED" in str(err)
 
 
 def _parse_duration_seconds(text: str) -> Optional[float]:
-    """Parse '7829s' or '2h10m29.08s' style durations into seconds."""
     m = re.fullmatch(r"\s*(?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?\s*", text or "")
     if not m or not any(m.groups()):
         return None
@@ -320,10 +302,6 @@ def _format_duration(seconds: Optional[float]) -> str:
 
 
 def _parse_quota_error(err: Exception) -> Tuple[bool, Optional[float]]:
-    """
-    Returns (is_daily_quota, retry_after_seconds) for a 429 error, using the
-    structured error payload when available and falling back to the message text.
-    """
     daily = False
     retry_after: Optional[float] = None
 
@@ -352,11 +330,6 @@ def _parse_quota_error(err: Exception) -> Tuple[bool, Optional[float]]:
 
 
 class GeminiQuotaError(RuntimeError):
-    """
-    Raised when Gemini's quota is exhausted and waiting/retrying here won't help.
-    The message is written to be shown directly to the user.
-    """
-
     def __init__(
         self,
         model: str,
@@ -394,12 +367,6 @@ class UniverseOrchestrator:
         model: str = DEFAULT_MODEL,
         fallback_models: Optional[List[str]] = None,
     ):
-        """
-        api_key is optional. Without one the orchestrator runs in analytics-only
-        mode: ranking, comparison, keyword and export helpers all work, but any
-        method that calls Gemini (audition_*, refine_*) raises a clear ValueError
-        via the `client` property.
-        """
         http_opts = types.HttpOptions(api_version="v1beta")
         if api_key:
             self._client = genai.Client(api_key=api_key, http_options=http_opts)
@@ -413,11 +380,9 @@ class UniverseOrchestrator:
         self.fallback_models: List[str] = (
             list(DEFAULT_FALLBACK_MODELS) if fallback_models is None else list(fallback_models)
         )
-        self.last_model_used: Optional[str] = None  # lets the UI show when a fallback served the request
+        self.last_model_used: Optional[str] = None
         self.last_response: Optional[PitchAuditionResponse] = None
 
-        # Diagnostic: makes a stale/duplicate copy of this module, or a client
-        # built with the wrong API version, visible in the logs immediately.
         try:
             _opts = getattr(getattr(self._client, "_api_client", None), "_http_options", None)
             _ver = getattr(_opts, "api_version", "unknown")
@@ -449,14 +414,7 @@ class UniverseOrchestrator:
         temperature: float,
         schema: Any,
     ):
-        """
-        Single entry point for every structured-output Gemini call.
-
-        Tries the primary model, then each fallback model if (and only if) the
-        previous one hit a quota wall. Per-call behavior is in _call_model().
-        Raises GeminiQuotaError (user-presentable) if every model is exhausted.
-        """
-        client = self.client  # raises a clear ValueError in analytics-only mode
+        client = self.client
 
         models_to_try = [self.model] + [m for m in self.fallback_models if m != self.model]
         quota_errors: List[GeminiQuotaError] = []
@@ -484,9 +442,9 @@ class UniverseOrchestrator:
                                    model_name, models_to_try[i + 1])
                 continue
 
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 if i == 0:
-                    raise  # a real problem with the primary model: surface it
+                    raise
                 logger.warning("Fallback model %s unusable (%s); skipping.", model_name, e)
                 continue
 
@@ -508,16 +466,6 @@ class UniverseOrchestrator:
         temperature: float,
         schema: Any,
     ):
-        """
-        One model, with retries:
-        - Transient failures (network, 5xx): linear backoff.
-        - 429: short per-minute throttles are waited out (honoring the server's
-          retry delay); daily-quota exhaustion or long waits raise GeminiQuotaError
-          immediately instead of burning retries.
-        - Other 4xx: fail fast.
-        - system_instruction rejected by the API version: retried once with the
-          instruction inlined into the prompt (doesn't consume a retry).
-        """
         use_system_instruction = True
         last_error: Optional[Exception] = None
         attempt = 1
@@ -549,7 +497,7 @@ class UniverseOrchestrator:
                     return response.parsed
                 raise ValueError("Model response did not contain structured parsed data.")
 
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 last_error = e
 
                 if use_system_instruction and _is_system_instruction_unsupported(e):
@@ -625,7 +573,7 @@ class UniverseOrchestrator:
 
         if is_direct:
             system_instruction = SYSTEM_INSTRUCTION_DIRECT
-            domain_instruction = "Direct visual storyboards with high narrative pacing and literal fidelity."
+            domain_instruction = "Direct visual storyboards with high narrative pacing, functional nicknames, and literal fidelity."
             prompt = AUDITION_DIRECT_TEMPLATE.format(
                 curriculum_text=text,
                 domain_instruction=domain_instruction
@@ -634,7 +582,7 @@ class UniverseOrchestrator:
             system_instruction = _system_instruction_forced(domain)
             domain_instruction = (
                 f"All three pitches MUST be drawn from the '{domain}' domain specifically — "
-                "vary the hook and story angle, not the domain."
+                "vary the hook, story angle, and functional nicknames, not the domain."
             )
             prompt = AUDITION_METAPHOR_TEMPLATE.format(
                 curriculum_text=text,
@@ -654,7 +602,7 @@ class UniverseOrchestrator:
             else:
                 domain_instruction = (
                     "Draw from 3 completely different domains with preference for "
-                    "Gen Z native categories. Menu order is randomized this run."
+                    "Gen Z native categories. Include functional nicknames for all technical terms."
                 )
             prompt = AUDITION_METAPHOR_TEMPLATE.format(
                 curriculum_text=text,
@@ -702,10 +650,7 @@ class UniverseOrchestrator:
         return response.pitches[index]
 
     def rank_pitches_by_engagement(self, response: PitchAuditionResponse) -> List[Tuple[int, StoryPitch, float]]:
-        """
-        Rank pitches by engagement score.
-        Returns: List of (index, pitch, score) tuples, sorted by score (highest first).
-        """
+        """Rank pitches by engagement score."""
         ranked = [
             (i, pitch, pitch.engagement_score())
             for i, pitch in enumerate(response.pitches)
@@ -713,10 +658,7 @@ class UniverseOrchestrator:
         return sorted(ranked, key=lambda x: x[2], reverse=True)
 
     def compare_pitches(self, response: PitchAuditionResponse) -> Dict[str, Any]:
-        """
-        Generate a comprehensive comparison of all 3 pitches.
-        Returns analytics on domains, engagement, word counts, etc.
-        """
+        """Generate a comprehensive comparison of all 3 pitches."""
         return {
             "domains": response.domains_represented(),
             "is_direct_narrative": response.is_direct_narrative(),
@@ -744,10 +686,15 @@ class UniverseOrchestrator:
         return response.domains_represented()
 
     def extract_keywords_from_pitch(self, pitch: StoryPitch, max_keywords: int = 5) -> List[str]:
-        """
-        Extract key terms from a pitch using simple keyword extraction.
-        Returns top keywords from title and core analogy.
-        """
+        """Extract key terms from bolded markdown (**term**) or high-frequency words."""
+        bolded_matches = re.findall(r'\*\*(.*?)\*\*', f"{pitch.title} {pitch.core_analogy_or_beats}")
+        if bolded_matches:
+            # Deduplicate while preserving order
+            seen = set()
+            unique_bold = [x.strip() for x in bolded_matches if not (x.strip() in seen or seen.add(x.strip()))]
+            if len(unique_bold) >= max_keywords:
+                return unique_bold[:max_keywords]
+
         combined_text = f"{pitch.title} {pitch.core_analogy_or_beats}".lower()
         stop_words = {
             "the", "a", "an", "and", "or", "is", "are", "was", "were", "be", "been",
@@ -755,7 +702,7 @@ class UniverseOrchestrator:
         }
         words = re.findall(r'\b[a-z]{4,}\b', combined_text)
         unique_words = [w for w in words if w not in stop_words]
-        return unique_words[:max_keywords]
+        return (bolded_matches + unique_words)[:max_keywords]
 
     def get_narrative_mode(self, response: PitchAuditionResponse) -> str:
         """Determine if response is Direct Narrative or Metaphor mode."""
@@ -773,9 +720,7 @@ class UniverseOrchestrator:
         feedback: str,
         temperature: float = DEFAULT_TEMPERATURE
     ) -> StoryPitch:
-        """
-        Refine a single pitch based on feedback.
-        """
+        """Refine a single pitch based on feedback."""
         pitch_markdown = pitch.to_markdown_card()
         prompt = REFINEMENT_TEMPLATE.format(
             original_pitch=pitch_markdown,
@@ -799,9 +744,7 @@ class UniverseOrchestrator:
         feedback_dict: Dict[int, str],
         temperature: float = DEFAULT_TEMPERATURE
     ) -> PitchAuditionResponse:
-        """
-        Refine multiple pitches based on per-pitch feedback.
-        """
+        """Refine multiple pitches based on per-pitch feedback."""
         refined_pitches = []
         for idx, pitch in enumerate(response.pitches):
             if idx in feedback_dict:
