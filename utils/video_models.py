@@ -6,9 +6,9 @@ Canonical data contracts for The Vault story-to-video production pipeline.
 This module defines:
 - VideoProject: the complete project being produced from a pitch + curriculum
 - ScriptScene: one segment of the 90-second micro-documentary
-- AssessmentQuestion: one Mcq question in the export package
+- AssessmentQuestion: one MCQ question in the export package
 - RenderArtifact: final output metadata for generated audio/video/subtitles
-- Helper parsers for raw LLM output from Page 3 (script + MCQ bundle)
+- Parsing helpers for raw LLM output from Page 3
 
 Why this exists:
 - Prevents fragile ad-hoc parsing and session-state strings
@@ -19,9 +19,8 @@ Why this exists:
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
-
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # CORE DATA MODELS
@@ -91,7 +90,7 @@ class AssessmentQuestion:
         for idx, opt in enumerate(self.options):
             if not opt.strip():
                 issues.append(f"Question '{self.question[:60]}...' option {idx + 1} is empty.")
-        if self.correct_answer.strip() not in {"A", "B", "C", "D"}:
+        if self.correct_answer.strip().upper() not in {"A", "B", "C", "D"}:
             issues.append(f"Question '{self.question[:60]}...' has invalid correct answer: {self.correct_answer!r}")
         return issues
 
@@ -170,12 +169,7 @@ class VideoProject:
         return sum(scene.duration for scene in self.scenes)
 
     def validate(self) -> List[str]:
-        """
-        Validate the project before rendering or export.
-        Returns a list of issues; empty list means valid enough to proceed.
-        """
         issues: List[str] = []
-
         if not self.topic.strip():
             issues.append("Project topic is empty.")
         if not self.pilot_id.strip():
@@ -186,7 +180,6 @@ class VideoProject:
         else:
             for scene in self.scenes:
                 issues.extend(scene.validate())
-
             total = self.total_scene_duration
             if abs(total - self.target_duration_sec) > 12:
                 issues.append(
@@ -241,14 +234,11 @@ def make_default_video_project(
 # ---------------------------------------------------------------------------
 
 def _to_seconds(mmss: str) -> float:
-    """
-    Converts "00:15" or "01:25" into seconds.
-    """
     text = mmss.strip()
     if ":" not in text:
         raise ValueError(f"Invalid timestamp format: {text!r}")
-    m, s = text.split(":", 1)
-    return int(m) * 60 + int(s)
+    minutes, seconds = text.split(":", 1)
+    return int(minutes) * 60 + int(seconds)
 
 
 def parse_scene_blocks(raw_text: str) -> List[ScriptScene]:
@@ -267,7 +257,6 @@ def parse_scene_blocks(raw_text: str) -> List[ScriptScene]:
     lines = raw_text.splitlines()
 
     current: Optional[ScriptScene] = None
-    current_mode: Optional[str] = None
 
     def flush_current() -> None:
         nonlocal current
@@ -277,7 +266,6 @@ def parse_scene_blocks(raw_text: str) -> List[ScriptScene]:
 
     for line in lines:
         stripped = line.strip()
-
         if not stripped:
             continue
 
@@ -301,24 +289,19 @@ def parse_scene_blocks(raw_text: str) -> List[ScriptScene]:
                 visual_prompt="",
                 narration="",
             )
-            current_mode = None
             continue
 
         if current is None:
             continue
 
-        # Support exactly the style used in Page 3
         if stripped.lower().startswith("[visual]"):
             current.visual_prompt = stripped[len("[visual]"):].strip()
-            current_mode = "visual"
             continue
 
         if stripped.lower().startswith("[vo]"):
             current.narration = stripped[len("[vo]"):].strip()
-            current_mode = "narration"
             continue
 
-        # Handle generic labeled lines
         if ":" in stripped and stripped.split(":", 1)[0].lower() in {"visual", "voiceover", "narration", "caption"}:
             label, val = stripped.split(":", 1)
             label = label.strip().lower()
@@ -328,15 +311,12 @@ def parse_scene_blocks(raw_text: str) -> List[ScriptScene]:
                 current.narration = val.strip()
             elif label == "caption":
                 current.on_screen_text = val.strip()
-            current_mode = label
             continue
 
-        # If there are freeform content lines after the scene starts, append them
-        # to narration unless the scene title is still empty.
         if current.title == "":
             current.title = stripped
-        elif current_mode == "visual":
-            current.visual_prompt = (current.visual_prompt + " " + stripped).strip()
+        elif current.visual_prompt == "":
+            current.visual_prompt = stripped
         else:
             current.narration = (current.narration + " " + stripped).strip()
 
@@ -371,7 +351,6 @@ def parse_mcq_block(raw_text: str) -> List[AssessmentQuestion]:
             explanation = ""
             kind = "post"
 
-            # Gather the rest until the next "Question:" or the end of block
             j = i + 1
             while j < len(lines):
                 candidate = lines[j].strip()
@@ -386,7 +365,6 @@ def parse_mcq_block(raw_text: str) -> List[AssessmentQuestion]:
                     explanation = candidate.split(":", 1)[1].strip()
                 elif candidate.lower().startswith("kind:"):
                     kind = candidate.split(":", 1)[1].strip().lower()
-
                 j += 1
 
             if q_text:
@@ -419,7 +397,6 @@ def parse_project_from_llm_output(raw_output: str, topic: str, pilot_id: str, ta
         raw_llm_output=raw_output,
     )
 
-    # Split into script and assessment blocks using markers from Page 3's prompt
     markers = [
         "=== SCRIPT MANIFEST ===",
         "=== ASSESSMENT PACKAGE ===",
@@ -436,32 +413,21 @@ def parse_project_from_llm_output(raw_output: str, topic: str, pilot_id: str, ta
             break
 
     if split_idx is None:
-        # No clear marker found; likely the whole output is a script or an unexpected format
         script_text = raw_output.strip()
         assessment_text = ""
     else:
         script_text = raw_output[:split_idx].strip()
         assessment_text = raw_output[split_idx:].strip()
 
-    # Parse script sections
     project.scenes = parse_scene_blocks(script_text)
-
-    # Parse MCQs from the assessment block
     project.assessment_questions = parse_mcq_block(assessment_text)
 
-    # If we didn't get enough Qs, try a second pass on the full output in case the split failed
     if len(project.assessment_questions) < 4 and assessment_text == "":
         project.assessment_questions = parse_mcq_block(raw_output)
 
-    # If project has no scenes, still allow parse to continue without failing
     project.status = "parsed" if project.scenes or project.assessment_questions else "draft"
-
     return project
 
-
-# ---------------------------------------------------------------------------
-# UTILITY
-# ---------------------------------------------------------------------------
 
 def normalize_answer_letter(letter: str) -> str:
     cleaned = (letter or "").strip().upper()
