@@ -1,26 +1,17 @@
 """
 Subtitle generation for The Vault.
 
-Supports TTS-aligned cues and a sentence-timing fallback. Markdown terms
-written as **term** are converted to styled ASS text.
-
-Timestamps may be dictionaries with:
-    {"start_time": 0.0, "end_time": 2.5, "text": "Narration cue"}
-
-If end_time is omitted, the next cue's start_time (or the video duration
-for the last cue) is used.
+Supports TTS-aligned cues and a sentence-timing fallback.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _TERM_PATTERN = re.compile(r"\*\*(.+?)\*\*")
 _SENTENCE_PATTERN = re.compile(r".+?(?:[.!?]+(?=\s|$)|$)", re.DOTALL)
-
 
 def generate_styled_ass(
     script_text: str,
@@ -29,20 +20,6 @@ def generate_styled_ass(
     timestamps: Optional[Sequence[Dict[str, Any]]] = None,
     resolution: Tuple[int, int] = (1080, 1920),
 ) -> str:
-    """
-    Write an ASS subtitle file and return its path.
-
-    Args:
-        script_text: Narration text. `**term**` markup is highlighted.
-        duration_sec: Final audio/video duration in seconds.
-        output_path: Destination `.ass` file.
-        timestamps: Optional TTS alignment cues. Each cue should have
-            `start_time`, `text`, and optionally `end_time`.
-        resolution: ASS play resolution, defaulting to vertical 1080x1920.
-
-    Raises:
-        ValueError: If duration or resolution is invalid.
-    """
     if duration_sec <= 0:
         raise ValueError("duration_sec must be greater than zero.")
     if len(resolution) != 2 or any(int(dimension) <= 0 for dimension in resolution):
@@ -50,8 +27,8 @@ def generate_styled_ass(
 
     cues = _normalise_cues(script_text, duration_sec, timestamps)
     header = _build_header(int(resolution[0]), int(resolution[1]))
-
     events = []
+
     for start, end, text in cues:
         if not text.strip() or end <= start:
             continue
@@ -76,7 +53,6 @@ def _normalise_cues(
     duration_sec: float,
     timestamps: Optional[Sequence[Dict[str, Any]]],
 ) -> List[Tuple[float, float, str]]:
-    """Validate and clamp provider cues, or estimate sentence-level cues."""
     if timestamps:
         prepared = []
         for cue in timestamps:
@@ -85,11 +61,10 @@ def _normalise_cues(
             text = str(cue.get("text", "")).strip()
             if not text:
                 continue
-            start = _as_seconds(cue.get("start_time"), default=0.0)
-            end_value = cue.get("end_time")
-            end = _as_seconds(end_value, default=-1.0) if end_value is not None else -1.0
-            prepared.append((start, end, text))
-
+            start = float(cue.get("start_time", 0.0) or 0.0)
+            end = cue.get("end_time")
+            end_value = float(end) if end is not None else -1.0
+            prepared.append((start, end_value, text))
         prepared.sort(key=lambda item: item[0])
         normalised = []
         for index, (start, end, text) in enumerate(prepared):
@@ -98,35 +73,20 @@ def _normalise_cues(
                     end = prepared[index + 1][0]
                 else:
                     end = duration_sec
-
             start = max(0.0, min(float(start), duration_sec))
             end = max(0.0, min(float(end), duration_sec))
             if end > start:
                 normalised.append((start, end, text))
-
         if normalised:
             return normalised
 
     return _estimate_sentence_cues(script_text, duration_sec)
 
 
-def _as_seconds(value: Any, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _estimate_sentence_cues(
     script_text: str,
     duration_sec: float,
 ) -> List[Tuple[float, float, str]]:
-    """
-    Estimate sentence timings proportionally by word count.
-
-    This is only a fallback. Use actual TTS alignment cues for production
-    captions, since pauses and delivery speed vary.
-    """
     sentences = [
         match.group(0).strip()
         for match in _SENTENCE_PATTERN.finditer(script_text.strip())
@@ -141,11 +101,7 @@ def _estimate_sentence_cues(
     cues = []
 
     for index, (sentence, weight) in enumerate(zip(sentences, weights)):
-        end = (
-            duration_sec
-            if index == len(sentences) - 1
-            else cursor + duration_sec * weight / total_weight
-        )
+        end = duration_sec if index == len(sentences) - 1 else cursor + duration_sec * weight / total_weight
         cues.append((cursor, end, sentence))
         cursor = end
 
@@ -153,22 +109,18 @@ def _estimate_sentence_cues(
 
 
 def _format_ass_text(text: str) -> str:
-    """Escape literal ASS control characters and style `**term**` spans."""
     parts = []
     cursor = 0
-
     for match in _TERM_PATTERN.finditer(text):
         parts.append(_escape_ass_text(text[cursor:match.start()]))
         term = _escape_ass_text(match.group(1))
         parts.append(r"{\c&H00FFFF&\fs66\b1}" + term + r"{\r}")
         cursor = match.end()
-
     parts.append(_escape_ass_text(text[cursor:]))
     return "".join(parts).replace("\r\n", "\n").replace("\r", "\n").replace("\n", r"\N")
 
 
 def _escape_ass_text(text: str) -> str:
-    # ASS uses braces for override tags and backslashes for control sequences.
     return text.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
 
 
@@ -190,7 +142,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def _sec_to_ass_time(seconds: float) -> str:
-    """Format seconds as ASS H:MM:SS.cc."""
     total_centiseconds = max(0, round(seconds * 100))
     centiseconds = total_centiseconds % 100
     total_seconds = total_centiseconds // 100
