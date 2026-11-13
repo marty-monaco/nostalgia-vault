@@ -3,15 +3,6 @@ Visual asset planning and retrieval boundary for The Vault.
 
 The default mock path creates valid placeholder PNG images locally. A real
 provider can be supplied later without changing the downstream scene format.
-
-A provider is a callable:
-    provider(prompt_info: dict, output_dir: Path) -> dict
-
-It should return at least:
-    {"image_path": "/path/to/image.png"}
-
-Optional metadata:
-    {"source": "...", "license": "...", "attribution": "..."}
 """
 
 from __future__ import annotations
@@ -23,9 +14,7 @@ import zlib
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-
 AssetProvider = Callable[[Dict[str, Any], Path], Dict[str, Any]]
-
 
 def fetch_visual_assets(
     storyboard_prompts: List[Dict[str, Any]],
@@ -33,22 +22,6 @@ def fetch_visual_assets(
     output_dir: str = "build/assets",
     provider: Optional[AssetProvider] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Resolve storyboard prompts into scene asset records.
-
-    Args:
-        storyboard_prompts: Scene dictionaries. Recognized fields include
-            `scene_index`, `index`, `image_path`, `prompt`, `visual_prompt`,
-            `duration`, `duration_sec`, `caption`, and `asset_keywords`.
-        use_mock: Create local placeholder images when no provider/local image
-            is available. Defaults to True for backwards compatibility.
-        output_dir: Directory for generated placeholder assets.
-        provider: Optional injected asset provider.
-
-    Returns:
-        One result dictionary per prompt. Provider or file errors are recorded
-        as a failed asset result instead of aborting the whole batch.
-    """
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
 
@@ -69,12 +42,10 @@ def fetch_visual_assets(
             "asset_keywords": list(keywords) if isinstance(keywords, (list, tuple)) else [],
         }
 
-        # Reuse an explicitly supplied local file when it exists.
-        local_path = info.get("image_path")
-        if local_path and Path(str(local_path)).is_file():
+        if info.get("image_path") and Path(str(info["image_path"])).is_file():
             results.append({
                 **base,
-                "image_path": str(Path(str(local_path)).resolve()),
+                "image_path": str(Path(str(info["image_path"])).resolve()),
                 "status": "ready",
                 "source": info.get("source", "local"),
                 "license": info.get("license", ""),
@@ -90,7 +61,6 @@ def fetch_visual_assets(
                 image_path = Path(str(provided["image_path"]))
                 if not image_path.is_file():
                     raise FileNotFoundError(f"Provider output does not exist: {image_path}")
-
                 results.append({
                     **base,
                     **provided,
@@ -133,7 +103,6 @@ def fetch_visual_assets(
 
 
 def write_asset_manifest(assets: List[Dict[str, Any]], output_path: str) -> str:
-    """Write asset results and source/rights metadata as JSON."""
     manifest_path = Path(output_path)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(assets, indent=2), encoding="utf-8")
@@ -167,18 +136,13 @@ def _scene_duration(info: Dict[str, Any]) -> float:
 
 
 def _write_placeholder_png(path: Path, label: str, width: int = 640, height: int = 360) -> None:
-    """
-    Create a valid, dependency-free RGB PNG placeholder.
-
-    The image is intentionally simple; it confirms file/render plumbing but
-    is not a substitute for an approved production visual.
-    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     digest = hashlib.sha256(label.encode("utf-8")).digest()
     red = 28 + digest[0] % 80
     green = 35 + digest[1] % 80
     blue = 55 + digest[2] % 100
+
     row = bytes((0,)) + bytes((red, green, blue)) * width
     raw_image = row * height
 
